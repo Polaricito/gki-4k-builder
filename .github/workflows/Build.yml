@@ -1,12 +1,12 @@
-name: Compilar GKI 6.6 con KSU-Next (4KB)
+name: Compilar GKI 6.6 con KSU-Next y SUSFS (4KB)
 on:
-  workflow_dispatch: # Permite activar la compilación manualmente con un botón
+  workflow_dispatch: # Activación manual mediante un botón en la interfaz de GitHub
 
 jobs:
   build-kernel:
-    runs-on: ubuntu-latest
+    runs-runs-on: ubuntu-latest
     steps:
-      - name: Optimizar espacio de almacenamiento
+      - name: Maximizar espacio de almacenamiento en el servidor
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 5120
@@ -23,23 +23,45 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git libncurses-dev
-          # Clonamos una toolchain ligera y compatible con ARM64
+          # Clonamos Proton Clang, una toolchain optimizada y ligera para ARM64
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
 
-      - name: Inyectar KernelSU-Next
+      - name: Inyectar KernelSU-Next y Parches SUSFS
         run: |
           cd kernel-source
+          
+          # 1. Inyectar código base de KernelSU-Next (Rama dev/next)
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          
+          # 2. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
+          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
+          
+          # 3. Copiar archivos estructurales de SUSFS al árbol del kernel
+          cp ../susfs-src/kernel_patches/fs/susfs.c fs/
+          cp ../susfs-src/kernel_patches/include/linux/susfs.h include/linux/
+          
+          # 4. Aplicar parche principal de SUSFS al núcleo 6.6
+          patch -p1 < ../susfs-src/kernel_patches/50_add_susfs_in_kernel-6.6.patch
+          
+          # 5. Aplicar parche de integración a la carpeta de KernelSU-Next
+          cd KernelSU
+          patch -p1 --fuzz=3 < ../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de KSU aplicado con sutiles diferencias de la rama Next"
 
-      - name: Forzar Configuración de Páginas a 4KB
+      - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
           cd kernel-source
-          # Modificamos el defconfig genérico para deshabilitar 16K/64K y asegurar 4K
+          
+          # Asegurar el tamaño de página de 4KB indispensable para tu procesador
           echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
+          
+          # Habilitar las banderas de compilación necesarias en el defconfig genérico
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
 
-      - name: Compilar Núcleo
+      - name: Compilar Núcleo GKI
         run: |
           cd kernel-source
           export PATH=$(pwd)/../toolchain/bin:$PATH
@@ -50,8 +72,8 @@ jobs:
           make O=out gki_defconfig
           make -j$(nproc) O=out
 
-      - name: Subir Binario Resultante
+      - name: Subir Binario Resultante (Artefacto)
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_4k_ksunext
+          name: kernel_4k_ksunext_susfs
           path: kernel-source/out/arch/arm64/boot/Image.gz
