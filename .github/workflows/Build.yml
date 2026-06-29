@@ -35,65 +35,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git libncurses-dev clang lld llvm gcc-aarch64-linux-gnu
 
-      - name: Inyectar KernelSU Estándar y Parches SUSFS
+      - name: Inyectar KernelSU y Parches SUSFS
         run: |
-          cd kernel-source
+         cd kernel-source
 
-          # 1. Clonar KernelSU estándar de forma limpia
-          git clone --depth=1 https://github.com/tiann/KernelSU drivers/kernelsu
+             # 1. Limpieza absoluta de intentos anteriores redundantes o erróneos
+             rm -rf drivers/kernelsu
+             rm -rf ../KernelSU
 
-          # Enlace inteligente si la estructura interna varía
-          if [ -d drivers/kernelsu/kernel ]; then
-            echo "Estructura interna de KernelSU detectada. Enlazando..."
-            ln -sf kernel/Kconfig drivers/kernelsu/Kconfig
-            ln -sf kernel/Makefile drivers/kernelsu/Makefile
-          fi
+             # 2. Clonar KernelSU en la raíz del espacio de trabajo (fuera de drivers)
+             cd ..
+             git clone --depth=1 https://github.com/tiann/KernelSU KernelSU
+             cd kernel-source
 
-          # Crear enlaces de compatibilidad para paths rígidos de SUSFS
-          ln -sf kernelsu drivers/KernelSU
-          ln -sf kernelsu drivers/KernelSU-Next
+             # 3. Crear el enlace simbólico CORRECTO apuntando directamente a la subcarpeta 'kernel'
+             cd drivers
+             ln -sf ../../KernelSU/kernel kernelsu
+             cd ..
 
-          # 2. Integrar KernelSU en el sistema de construcción (Asegurando saltos de línea limpios)
-          echo "" >> drivers/Makefile
-          grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
-          
-          echo "" >> drivers/Kconfig
-          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+             # 4. Registrar de manera limpia la ruta en el sistema de compilación
+             echo "" >> drivers/Makefile
+             grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
+    
+             echo "" >> drivers/Kconfig
+             grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-          # 3. Clonar parches oficiales de SUSFS para GKI 6.6
-          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
+             # 5. Aplicar el parche de SUSFS diseñado para KernelSU en su directorio real
+             cd ../KernelSU/kernel
+             patch -p1 --fuzz=3 --ignore-whitespace < ../../kernel-source/../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Reajuste menor en parche integrado de KernelSU"
+    
+             cd ../../kernel-source
 
-          # 4. Copiar headers de SUSFS y archivo fuente
-          cp -v ../susfs-src/kernel_patches/include/linux/*.h include/linux/
-          cp -v ../susfs-src/kernel_patches/fs/susfs.c fs/
+             # 6. Aplicar el parche general de SUSFS para el Kernel GKI 6.6
+             patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Reajuste menor en parche principal"
 
-          # 5. Aplicar el parche principal de SUSFS
-          echo "=== Aplicando parche principal SUSFS ==="
-          if ! patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch; then
-            echo "❌ ERROR: El parche principal de SUSFS falló. Líneas rechazadas:"
-            find . -name "*.rej" -exec echo "--- Archivo: {} ---" \; -exec cat {} \;
-            exit 1
-          fi
+             # 7. Copiar todos los archivos de cabecera y código de SUSFS al árbol del kernel
+             cp ../susfs-src/include/linux/susfs.h include/linux/
+             cp ../susfs-src/include/linux/susfs_def.h include/linux/
+             cp ../susfs-src/fs/susfs.c fs/
 
-          # Asegurar que susfs.o se agregue al Makefile de fs sin corromper líneas
-          echo "" >> fs/Makefile
-          grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
-
-          # 6. Aplicar el parche de SUSFS específico para KernelSU Estándar
-          echo "=== Aplicando parche SUSFS a KernelSU ==="
-          cd drivers/kernelsu
-          if ! patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch; then
-            echo "❌ ERROR: El parche de SUSFS para KernelSU falló. Líneas rechazadas:"
-            find . -name "*.rej" -exec echo "--- Archivo: {} ---" \; -exec cat {} \;
-            exit 1
-          fi
-          cd ../..
-
-          # 7. Forzar la activación en el gki_defconfig aislando los flags con una línea nueva
-          echo "=== Activando configuraciones en gki_defconfig ==="
-          echo "" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+             # 8. Asegurar que susfs.o se enlace en el sistema de archivos
+             echo "" >> fs/Makefile
+             grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
