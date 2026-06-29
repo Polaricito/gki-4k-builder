@@ -27,7 +27,7 @@ jobs:
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
 
       - name: Inyectar KernelSU-Next y Parches SUSFS
-        run: |
+         run: |
           cd kernel-source
           
           # 1. Inyectar código base de KernelSU-Next (Rama dev/next)
@@ -40,11 +40,11 @@ jobs:
           cp ../susfs-src/kernel_patches/fs/susfs.c fs/
           cp ../susfs-src/kernel_patches/include/linux/susfs.h include/linux/
           
-          # 4. Aplicar parche principal de SUSFS (Nombre corregido para Android 15)
+          # 4. Aplicar parche principal de SUSFS
           patch -p1 < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
           
-          # 5. Aplicar parche de integración a la carpeta de KernelSU-Next
-          cd KernelSU
+          # 5. Aplicar parche de integración (Nombre de carpeta corregido a KernelSU-Next)
+          cd KernelSU-Next
           patch -p1 --fuzz=3 < ../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de KSU aplicado con sutiles diferencias"
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
