@@ -107,7 +107,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
 
-          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad en el A05M
+          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad
           echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
