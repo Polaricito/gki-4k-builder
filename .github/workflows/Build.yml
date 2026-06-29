@@ -18,15 +18,15 @@ jobs:
       - name: Descargar el Repositorio Base (CI Config)
         uses: actions/checkout@v4
 
-      - name: Configurar NodeJS v24 (Entorno Actualizado)
+      - name: Configurar NodeJS v20 (Versión Forzada)
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 20
 
       - name: Instalar Dependencias y Compiladores Nativos
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
 
       - name: Clonar Código Fuente del Kernel Real
         run: |
@@ -118,9 +118,9 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          # 3. Lanzar la compilación oficial
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gki_defconfig
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- -j$(nproc)
+          # 3. Lanzar la compilación usando las herramientas GNU nativas instaladas (aarch64-linux-gnu-)
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel con AnyKernel3
         run: |
