@@ -1,0 +1,57 @@
+name: Compilar GKI 6.6 con KSU-Next (4KB)
+on:
+  workflow_dispatch: # Permite activar la compilación manualmente con un botón
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Optimizar espacio de almacenamiento
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 5120
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Clonar Android Common Kernel (GKI 6.6)
+        run: |
+          git clone --depth=1 -b android6.6-5.y https://android.googlesource.com/kernel/common kernel-source
+
+      - name: Instalar Dependencias y Compilador Clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git libncurses-dev
+          # Clonamos una toolchain ligera y compatible con ARM64
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
+
+      - name: Inyectar KernelSU-Next
+        run: |
+          cd kernel-source
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+
+      - name: Forzar Configuración de Páginas a 4KB
+        run: |
+          cd kernel-source
+          # Modificamos el defconfig genérico para deshabilitar 16K/64K y asegurar 4K
+          echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
+
+      - name: Compilar Núcleo
+        run: |
+          cd kernel-source
+          export PATH=$(pwd)/../toolchain/bin:$PATH
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          make O=out gki_defconfig
+          make -j$(nproc) O=out
+
+      - name: Subir Binario Resultante
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel_4k_ksunext
+          path: kernel-source/out/arch/arm64/boot/Image.gz
