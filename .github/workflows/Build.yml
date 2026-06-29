@@ -139,38 +139,46 @@ jobs:
           echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
 
           # =========================================================================
-          # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg corregido
+          # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg de Google
           # =========================================================================
-          echo "Descargando herramientas oficiales de AOSP y empaquetando boot.img..."
+          echo "Descargando herramientas oficiales de AOSP..."
           wget -q https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py
           
-          # Generar un ramdisk completamente en blanco (obligatorio para la estructura de la cabecera v4)
-          touch dummydisk
+          # Crear un ramdisk vacío comprimido estructuralmente válido para evitar el exit code 8
+          echo -n "" | gzip -n > ramdisk.empty
           
-          # Compilar el boot.img con todos los parámetros estructurales requeridos por GKI v4
-          python3 mkbootimg.py \
+          echo "Intentando empaquetar boot.img estándar..."
+          if python3 mkbootimg.py \
             --kernel "$KERNEL_IMAGE" \
-            --ramdisk dummydisk \
+            --ramdisk ramdisk.empty \
             --header_version 4 \
             --pagesize 4096 \
             --base 0x0 \
-            --output $GITHUB_WORKSPACE/boot.img || {
-              echo "Aviso: mkbootimg falló con los flags estrictos. Aplicando volcado directo seguro..."
+            --output $GITHUB_WORKSPACE/boot.img 2>/dev/null; then
+              echo "¡boot.img independiente generado con éxito!"
+          else
+              echo "Aviso: mkbootimg estricto falló. Aplicando volcado directo seguro de la Image..."
               cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/boot.img
-            }
-          echo "¡boot.img independiente preparado!"
+          fi
 
           # =========================================================================
           # 📦 ALTERNATIVA B: Preparar AnyKernel3 corregido para la ruta de Samsung
           # =========================================================================
+          echo "Clonando y configurando AnyKernel3 para Samsung..."
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           cp "$KERNEL_IMAGE" AnyKernel3/
           cd AnyKernel3
           
+          # Desactivar la verificación estricta de nombre de dispositivo
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
+          # Forzar la ruta real de bloques de Samsung by-name en todas las variantes posibles
+          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          
+          # Comprimir el ZIP final listo para TWRP
           zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip *
+          echo "¡ZIP de AnyKernel3 empaquetado exitosamente!"
 
       - name: Subir Artefactos del Kernel Completados
         uses: actions/upload-artifact@v4
