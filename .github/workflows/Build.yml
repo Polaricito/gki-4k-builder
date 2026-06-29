@@ -61,18 +61,49 @@ jobs:
             echo "" >> drivers/Kconfig
             grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-            # 5. Aplicar el parche de SUSFS para KernelSU moviéndonos a su ruta absoluta
+            # 5. Localizar y aplicar el parche de SUSFS para KernelSU dinámicamente
             cd $GITHUB_WORKSPACE/KernelSU/kernel
-            patch -p1 --fuzz=3 --ignore-whitespace < $GITHUB_WORKSPACE/susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Ajuste menor en parche de KernelSU"
+            KSU_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*enable_susfs_for_ksu*.patch" | head -n 1)
+            if [ ! -z "$KSU_PATCH" ]; then
+                   echo "Aplicando parche de KernelSU encontrado en: $KSU_PATCH"
+                patch -p1 --fuzz=3 --ignore-whitespace < "$KSU_PATCH" || echo "Aviso: Ajuste menor en parche de KernelSU"
+            else
+                echo "Aviso: No se encontró un archivo de parche específico para KernelSU, saltando..."
+            fi
     
-            # 6. Regresar al kernel-source y aplicar el parche general de SUSFS para GKI 6.6
+            # 6. Regresar al kernel-source y localizar/aplicar el parche general de SUSFS para GKI 6.6
             cd $GITHUB_WORKSPACE/kernel-source
-            patch -p1 --fuzz=3 --ignore-whitespace < $GITHUB_WORKSPACE/susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Ajuste menor en parche principal"
+            GKI_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*add_susfs_in_gki*.patch" | head -n 1)
+            if [ ! -z "$GKI_PATCH" ]; then
+                echo "Aplicando parche GKI principal encontrado en: $GKI_PATCH"
+                patch -p1 --fuzz=3 --ignore-whitespace < "$GKI_PATCH" || echo "Aviso: Ajuste menor en parche principal"
+            else
+                echo "Aviso: No se encontró un archivo de parche GKI principal, saltando..."
+            fi
 
-            # 7. Copiar archivos de cabecera y código fuente de SUSFS usando rutas absolutas
-            cp $GITHUB_WORKSPACE/susfs-src/include/linux/susfs.h include/linux/
-            cp $GITHUB_WORKSPACE/susfs-src/include/linux/susfs_def.h include/linux/
-            cp $GITHUB_WORKSPACE/susfs-src/fs/susfs.c fs/
+            # 7. Copiar archivos de cabecera y código fuente de SUSFS con detección inteligente
+            echo "== Verificando si los archivos de SUSFS ya existen o necesitan copia =="
+    
+            # Buscamos dónde guardó simonpunk los archivos reales en su repositorio
+            REAL_SUSFS_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.h" | head -n 1)
+            REAL_SUSFS_DEF_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs_def.h" | head -n 1)
+            REAL_SUSFS_C=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.c" | head -n 1)
+
+            # Si el parche no los autogeneró y el archivo existe suelto en el repo clonado, lo copiamos
+            if [ ! -f include/linux/susfs.h ] && [ ! -z "$REAL_SUSFS_H" ]; then
+                echo "Inyectando susfs.h desde: $REAL_SUSFS_H"
+                cp "$REAL_SUSFS_H" include/linux/
+            fi
+
+            if [ ! -f include/linux/susfs_def.h ] && [ ! -z "$REAL_SUSFS_DEF_H" ]; then
+                echo "Inyectando susfs_def.h desde: $REAL_SUSFS_DEF_H"
+                cp "$REAL_SUSFS_DEF_H" include/linux/
+            fi
+
+            if [ ! -f fs/susfs.c ] && [ ! -z "$REAL_SUSFS_C" ]; then
+                echo "Inyectando susfs.c desde: $REAL_SUSFS_C"
+                cp "$REAL_SUSFS_C" fs/
+            fi
 
             # 8. Asegurar que susfs.o se enlace en el sistema de archivos
             echo "" >> fs/Makefile
