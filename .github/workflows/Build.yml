@@ -1,4 +1,4 @@
-ename: Compilar GKI 6.6 con KSU-Next y SUSFS (4KB)
+name: Compilar GKI 6.6 con KSU-Next y SUSFS (4KB)
 on:
   workflow_dispatch: # Activación manual mediante un botón en la interfaz de GitHub
 
