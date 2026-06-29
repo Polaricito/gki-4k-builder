@@ -3,29 +3,33 @@ name: Compilador de Kernel GKI 6.6 con KSU y SUSFS
 on:
   workflow_dispatch: # Permite lanzar la compilación manualmente desde la pestaña Actions
 
+# =========================================================================
+# ⚠️ CONFIGURACIÓN: KERNEL GENÉRICO DE GOOGLE (GKI 6.6)
+# =========================================================================
+env:
+  KERNEL_REPO: 'https://android.googlesource.com/kernel/common'
+  KERNEL_BRANCH: 'android6.6-6.6'
+# =========================================================================
+
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar el Repositorio Base
+      - name: Descargar el Repositorio Base (CI Config)
         uses: actions/checkout@v4
 
       - name: Instalar Dependencias y Compiladores Nativos
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip
-          # NOTA: Si tu flujo usa un set de herramientas Clang/AOSP específico (ej. prebuilts), 
-          # asegúrate de clonarlo o descargarlo en este bloque.
 
-      - name: Clonar Código Fuente del Kernel
+      - name: Clonar Código Fuente del Kernel Real
         run: |
-          # Clonamos tu rama del kernel en la carpeta 'kernel-source'
-          # Reemplaza la URL y la rama por la tuya si no se descarga automáticamente
-          git clone --depth=1 https://github.com/${{ github.repository }} $GITHUB_WORKSPACE/kernel-source
+          echo "Clonando código fuente del kernel desde $KERNEL_REPO (Rama: $KERNEL_BRANCH)..."
+          git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} $GITHUB_WORKSPACE/kernel-source
 
       - name: Clonar repositorio SUSFS (GitLab Simonpunk - GKI 6.6)
         run: |
-          # Descarga directa de la rama específica compatible con GKI 6.6 (Android 15)
           git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git $GITHUB_WORKSPACE/susfs-src
 
       - name: Inyectar KernelSU y Parches SUSFS
@@ -110,17 +114,14 @@ jobs:
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
 
           # 3. Lanzar la compilación oficial
-          # Si tu repositorio usa un script nativo (ej: 'build/build.sh'), comenta las siguientes dos líneas de 'make' y pon la tuya.
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gki_defconfig
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- -j$(nproc)
 
       - name: Empaquetar Kernel con AnyKernel3
         run: |
           cd $GITHUB_WORKSPACE
-          # Descargamos la última versión limpia de AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           
-          # Ubicar dinámicamente el binario generado 'Image'
           KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
               KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
@@ -131,14 +132,12 @@ jobs:
               cp "$KERNEL_IMAGE" AnyKernel3/
               
               cd AnyKernel3
-              # Desactivar verificación estricta de dispositivo para facilitar el flasheo universal de prueba
               sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
               sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=auto/g' anykernel.sh
               
-              # Comprimir el instalador listo para TWRP/OrangeFox/KernelFlasher
               zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_4KB.zip *
           else
-              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'. Revisa detalladamente los errores de compilación."
+              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
               exit 1
           fi
 
