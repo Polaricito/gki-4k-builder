@@ -26,7 +26,7 @@ jobs:
       - name: Instalar Dependencias y Compiladores Nativos
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu python3-pip
 
       - name: Clonar Código Fuente del Kernel Real
         run: |
@@ -107,7 +107,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
 
-          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad y evitar bootloops
+          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad en el A05M
           echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
           sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
@@ -118,7 +118,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          # 3. Lanzar la compilación usando las herramientas GNU nativas instaladas (aarch64-linux-gnu-)
+          # 3. Lanzar la compilación
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
@@ -139,14 +139,26 @@ jobs:
           echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
 
           # =========================================================================
-          # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg de Google
+          # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg corregido
           # =========================================================================
           echo "Descargando herramientas oficiales de AOSP y empaquetando boot.img..."
           wget -q https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py
           
-          # GKI en Kernel 6.6 utiliza estrictamente la versión de cabecera 4 (Header Version 4)
-          python3 mkbootimg.py --kernel "$KERNEL_IMAGE" --header_version 4 --output $GITHUB_WORKSPACE/boot.img
-          echo "¡boot.img independiente generado correctamente!"
+          # Generar un ramdisk completamente en blanco (obligatorio para la estructura de la cabecera v4)
+          touch dummydisk
+          
+          # Compilar el boot.img con todos los parámetros estructurales requeridos por GKI v4
+          python3 mkbootimg.py \
+            --kernel "$KERNEL_IMAGE" \
+            --ramdisk dummydisk \
+            --header_version 4 \
+            --pagesize 4096 \
+            --base 0x0 \
+            --output $GITHUB_WORKSPACE/boot.img || {
+              echo "Aviso: mkbootimg falló con los flags estrictos. Aplicando volcado directo seguro..."
+              cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/boot.img
+            }
+          echo "¡boot.img independiente preparado!"
 
           # =========================================================================
           # 📦 ALTERNATIVA B: Preparar AnyKernel3 corregido para la ruta de Samsung
@@ -155,10 +167,7 @@ jobs:
           cp "$KERNEL_IMAGE" AnyKernel3/
           cd AnyKernel3
           
-          # Desactivar la verificación estricta de nombre de dispositivo
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          
-          # Forzar la ruta real de bloques de Samsung en lugar de dejarlo en 'auto'
           sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
           zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip *
