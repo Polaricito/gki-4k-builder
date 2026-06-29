@@ -122,32 +122,51 @@ jobs:
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
-      - name: Empaquetar Kernel con AnyKernel3
+      - name: Empaquetar Kernel (AnyKernel3 y boot.img directo)
         run: |
           cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           
+          # 1. Localizar el archivo binario 'Image' compilado
           KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
               KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
           fi
 
-          if [ ! -z "$KERNEL_IMAGE" ]; then
-              echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
-              cp "$KERNEL_IMAGE" AnyKernel3/
-              
-              cd AnyKernel3
-              sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-              sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=auto/g' anykernel.sh
-              
-              zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_4KB.zip *
-          else
+          if [ -z "$KERNEL_IMAGE" ]; then
               echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
               exit 1
           fi
+          echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
 
-      - name: Subir ZIP del Kernel Terminado
+          # =========================================================================
+          # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg de Google
+          # =========================================================================
+          echo "Descargando herramientas oficiales de AOSP y empaquetando boot.img..."
+          wget -q https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py
+          
+          # GKI en Kernel 6.6 utiliza estrictamente la versión de cabecera 4 (Header Version 4)
+          python3 mkbootimg.py --kernel "$KERNEL_IMAGE" --header_version 4 --output $GITHUB_WORKSPACE/boot.img
+          echo "¡boot.img independiente generado correctamente!"
+
+          # =========================================================================
+          # 📦 ALTERNATIVA B: Preparar AnyKernel3 corregido para la ruta de Samsung
+          # =========================================================================
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cp "$KERNEL_IMAGE" AnyKernel3/
+          cd AnyKernel3
+          
+          # Desactivar la verificación estricta de nombre de dispositivo
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          
+          # Forzar la ruta real de bloques de Samsung en lugar de dejarlo en 'auto'
+          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          
+          zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip *
+
+      - name: Subir Artefactos del Kernel Completados
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_GKI_6.6_SUSFS_ZIP_Instalable
-          path: ${{ github.workspace }}/Kernel_GKI_6.6_SUSFS_4KB.zip
+          name: Kernel_GKI_6.6_Samsung_A05M
+          path: |
+            ${{ github.workspace }}/Kernel_GKI_6.6_SUSFS_Samsung.zip
+            ${{ github.workspace }}/boot.img
