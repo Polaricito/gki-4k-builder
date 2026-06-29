@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Permite lanzar la compilación manualmente desde la pestaña Actions
 
 # =========================================================================
-# ⚠️ CONFIGURACIÓN: KERNEL GENÉRICO DE GOOGLE (GKI 6.6)
+# ⚙️ CONFIGURACIÓN GLOBAL
 # =========================================================================
 env:
   KERNEL_REPO: 'https://android.googlesource.com/kernel/common'
@@ -17,6 +17,11 @@ jobs:
     steps:
       - name: Descargar el Repositorio Base (CI Config)
         uses: actions/checkout@v4
+
+      - name: Configurar NodeJS v24 (Entorno Actualizado)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - name: Instalar Dependencias y Compiladores Nativos
         run: |
