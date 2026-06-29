@@ -4,7 +4,7 @@ on:
 
 jobs:
   build-kernel:
-    runs-runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Maximizar espacio de almacenamiento en el servidor
         uses: easimon/maximize-build-space@master
