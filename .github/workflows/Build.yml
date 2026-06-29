@@ -141,44 +141,47 @@ jobs:
           # =========================================================================
           # 🚀 ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg de Google
           # =========================================================================
-          echo "Descargando herramientas oficiales de AOSP..."
-          wget -q https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py
+          [cite_start]echo "Descargando herramientas oficiales de AOSP..." [cite: 10]
+          [cite_start]wget -q --timeout=10 https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py [cite: 11]
+          [cite_start]chmod +x mkbootimg.py [cite: 12]
           
-          # Crear un ramdisk vacío comprimido estructuralmente válido para evitar el exit code 8
-          echo -n "" | gzip -n > ramdisk.empty
+          # Crear un ramdisk vacío comprimido estructuralmente válido (Evita el Error status 8)
+          [cite_start]echo -n "" | gzip -n > ramdisk.empty [cite: 10, 11]
           
-          echo "Intentando empaquetar boot.img estándar..."
+          [cite_start]echo "Intentando empaquetar boot.img estándar..." [cite: 12]
+          # El bloque if protege la ejecución para que 'set -e' no detenga el workflow si mkbootimg falla
           if python3 mkbootimg.py \
             --kernel "$KERNEL_IMAGE" \
             --ramdisk ramdisk.empty \
             --header_version 4 \
             --pagesize 4096 \
             --base 0x0 \
-            --output $GITHUB_WORKSPACE/boot.img 2>/dev/null; then
-              echo "¡boot.img independiente generado con éxito!"
+            [cite_start]--output $GITHUB_WORKSPACE/boot.img 2>&1; then [cite: 12, 13, 14]
+              [cite_start]echo "¡boot.img independiente generado con éxito!" [cite: 14]
           else
-              echo "Aviso: mkbootimg estricto falló. Aplicando volcado directo seguro de la Image..."
-              cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/boot.img
+              [cite_start]echo "Aviso: mkbootimg falló o arrojó advertencias. Aplicando volcado directo seguro de la Image..." [cite: 15]
+              [cite_start]cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/boot.img [cite: 15]
           fi
 
           # =========================================================================
           # 📦 ALTERNATIVA B: Preparar AnyKernel3 corregido para la ruta de Samsung
           # =========================================================================
-          echo "Clonando y configurando AnyKernel3 para Samsung..."
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          cp "$KERNEL_IMAGE" AnyKernel3/
-          cd AnyKernel3
+          [cite_start]echo "Clonando y configurando AnyKernel3 para Samsung..." [cite: 15, 16]
+          rm -rf AnyKernel3
+          [cite_start]git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3 [cite: 16]
+          cp "$KERNEL_IMAGE" AnyKernel3/Image
+          [cite_start]cd AnyKernel3 [cite: 16]
           
           # Desactivar la verificación estricta de nombre de dispositivo
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          [cite_start]sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh [cite: 16]
           
           # Forzar la ruta real de bloques de Samsung by-name en todas las variantes posibles
-          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
-          sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          [cite_start]sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh [cite: 16]
+          [cite_start]sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh [cite: 16]
           
           # Comprimir el ZIP final listo para TWRP
-          zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip *
-          echo "¡ZIP de AnyKernel3 empaquetado exitosamente!"
+          [cite_start]zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip * [cite: 17]
+          [cite_start]echo "¡ZIP de AnyKernel3 empaquetado exitosamente!" [cite: 17]
 
       - name: Subir Artefactos del Kernel Completados
         uses: actions/upload-artifact@v4
