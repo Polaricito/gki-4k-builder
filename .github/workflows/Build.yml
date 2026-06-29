@@ -1,4 +1,4 @@
-name: Compilar GKI 6.6 con KSU-Next y SUSFS (4KB)
+ename: Compilar GKI 6.6 con KSU-Next y SUSFS (4KB)
 on:
   workflow_dispatch: # Activación manual mediante un botón en la interfaz de GitHub
 
@@ -26,7 +26,7 @@ jobs:
           # Clonamos Proton Clang, una toolchain optimizada y ligera para ARM64
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git toolchain
 
-      - name: Inyectar KernelSU-Next y Parches SUSFS
+      -  name: Inyectar KernelSU-Next y Parches SUSFS
          run: |
           cd kernel-source
           
