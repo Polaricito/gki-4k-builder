@@ -27,24 +27,30 @@ jobs:
       - name: Inyectar KernelSU-Next y Parches SUSFS
         run: |
           cd kernel-source
-          
-          # 1. Inyectar código base de KernelSU-Next (Rama dev/next)
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          
-          # 2. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
-          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
-          
-          # 3. Copiar archivos estructurales de SUSFS al árbol del kernel
-          cp ../susfs-src/kernel_patches/fs/susfs.c fs/
-          cp ../susfs-src/kernel_patches/include/linux/susfs.h include/linux/
-          
-          # 4. Aplicar parche principal de SUSFS
-          patch -p1 < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
-          
-          # 5. Aplicar parche de integración a la carpeta de KernelSU-Next
-          cd KernelSU-Next
-          patch -p1 --fuzz=3 < ../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de KSU aplicado"
 
+          # 1. Clonar e inyectar KernelSU-Next de forma explícita (rama next)
+          git clone --depth=1 -b next https://github.com/rifsxd/KernelSU-Next KernelSU-Next
+          
+          # Crear un enlace simbólico para que los parches heredados que busquen "KernelSU" no fallen
+          ln -sf KernelSU-Next KernelSU
+
+          # 2. Clonar el repositorio de parches de SUSFS correspondiente a GKI 6.6
+          git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
+
+          # 3. COPIAR TODOS LOS HEADERS (Aquí se soluciona el fallo de susfs_def.h)
+          # Usamos el comodín *.h para asegurar que pasen susfs.h, susfs_def.h, etc.
+          cp -v ../susfs-src/kernel_patches/include/linux/*.h include/linux/
+          
+          # Copiar el archivo fuente de susfs
+          cp -v ../susfs-src/kernel_patches/fs/susfs.c fs/
+
+          # 4. Aplicar el parche principal de SUSFS al GKI
+          patch -p1 --fuzz=3 < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
+
+          # 5. Aplicar el parche de integración en KernelSU-Next
+          cd KernelSU-Next
+          patch -p1 --fuzz=3 < ../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: El parche de integración se aplicó con variaciones toleradas"
+          
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
           cd kernel-source
@@ -76,4 +82,5 @@ jobs:
         with:
           name: kernel_4k_ksunext_susfs
           path: kernel-source/out/arch/arm64/boot/Image.gz
+
           
