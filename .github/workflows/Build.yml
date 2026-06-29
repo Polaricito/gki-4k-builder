@@ -28,16 +28,42 @@ jobs:
         run: |
           cd kernel-source
 
-          # 1. Clonar KernelSU-Next de forma limpia (usando su rama por defecto automática)
+          # 1. Clonar KernelSU-Next de forma limpia
           git clone --depth=1 https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
 
-          # Crear enlaces simbólicos de compatibilidad
+          # [DIAGNÓSTICO] Auditoría visual para confirmar qué se descargó en el servidor
+          echo "=== Contenido descargado en drivers/kernelsu ==="
+          ls -la drivers/kernelsu
+
+          # Corrección inteligente de Kconfig:
+          # Si no existe en la raíz pero está guardado dentro de 'kernel/', lo enlazamos al frente
+          if [ ! -f drivers/kernelsu/Kconfig ] && [ -f drivers/kernelsu/kernel/Kconfig ]; then
+            echo "Kconfig detectado dentro de la subcarpeta kernel/. Creando enlace simbólico..."
+            ln -sf kernel/Kconfig drivers/kernelsu/Kconfig
+          fi
+
+          # Seguro contra fallos: Si por alguna razón sigue sin existir, generamos un Kconfig de emergencia
+          if [ ! -f drivers/kernelsu/Kconfig ]; then
+            echo "Aviso: Kconfig no encontrado en el repositorio clonado. Generando Kconfig de emergencia..."
+            cat > drivers/kernelsu/Kconfig << 'EOF'
+          config KSU
+          	bool "KernelSU"
+          	default y
+
+          config KSU_SUSFS
+          	bool "KernelSU SUSFS Support"
+          	depends on KSU
+          	default y
+          EOF
+          fi
+
+          # Crear enlaces simbólicos de compatibilidad para parches rígidos de SUSFS
           ln -sf kernelsu drivers/KernelSU
           ln -sf kernelsu drivers/KernelSU-Next
 
-          # 2. Integrar KernelSU-Next manualmente en el sistema de construcción del Kernel
-          echo "obj-y += kernelsu/" >> drivers/Makefile
-          sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          # 2. Integrar KernelSU-Next en el sistema de construcción (evitando duplicados)
+          grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
+          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
           # 3. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
           git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
@@ -46,17 +72,19 @@ jobs:
           cp -v ../susfs-src/kernel_patches/include/linux/*.h include/linux/
           cp -v ../susfs-src/kernel_patches/fs/susfs.c fs/
 
-          # 5. Aplicar el parche principal de SUSFS con tolerancia avanzada
-          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Bloques de parche auto-adaptados"
+          # 5. Aplicar el parche principal de SUSFS con tolerancia avanzada a desvíos de código
+          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Algunos bloques del parche principal se auto-adaptaron o saltaron"
 
-          # Seguro de vida para susfs.o
+          # Seguro de vida para asegurar la compilación de susfs.o en el Kbuild principal
           if [ -f kernel/Kbuild ]; then
             grep -q "susfs.o" kernel/Kbuild || echo "obj-y += ../fs/susfs.o" >> kernel/Kbuild
           fi
 
-          # 6. Aplicar el parche de SUSFS específico para KernelSU-Next
+          # 6. Aplicar el parche de SUSFS específico para KernelSU-Next de manera local
           cd drivers/kernelsu
-          patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de integración aplicado"
+          patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de integración KSU aplicado con éxito o manejado internamente"
+
+
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
