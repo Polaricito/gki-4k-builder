@@ -44,31 +44,12 @@ jobs:
 
           # Enlace inteligente si la estructura interna varía
           if [ -d drivers/kernelsu/kernel ]; then
-            echo "Estructura interna detectada. Enlazando archivos de configuración..."
+            echo "Estructura interna de KernelSU detectada. Enlazando..."
             ln -sf kernel/Kconfig drivers/kernelsu/Kconfig
             ln -sf kernel/Makefile drivers/kernelsu/Makefile
           fi
 
-          # Seguro contra fallos: Configurar Kconfig si está ausente
-          if [ ! -f drivers/kernelsu/Kconfig ]; then
-            cat > drivers/kernelsu/Kconfig << 'EOF'
-          config KSU
-          	bool "KernelSU"
-          	default y
-
-          config KSU_SUSFS
-          	bool "KernelSU SUSFS Support"
-          	depends on KSU
-          	default y
-          EOF
-          fi
-
-          # Seguro contra fallos: Configurar Makefile si está ausente
-          if [ ! -f drivers/kernelsu/Makefile ]; then
-            echo "obj-y += core/" > drivers/kernelsu/Makefile
-          fi
-
-          # Crear enlaces de compatibilidad para los paths rígidos del parche de SUSFS
+          # Crear enlaces de compatibilidad para paths rígidos de SUSFS
           ln -sf kernelsu drivers/KernelSU
           ln -sf kernelsu drivers/KernelSU-Next
 
@@ -91,10 +72,8 @@ jobs:
             exit 1
           fi
 
-          # Asegurar la inclusión de susfs.o en el Kbuild
-          if [ -f kernel/Kbuild ]; then
-            grep -q "susfs.o" kernel/Kbuild || echo "obj-y += ../fs/susfs.o" >> kernel/Kbuild
-          fi
+          # Asegurar que susfs.o se agregue a la compilación del sistema de archivos
+          grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
 
           # 6. Aplicar el parche de SUSFS específico para KernelSU Estándar
           echo "=== Aplicando parche SUSFS a KernelSU ==="
@@ -104,6 +83,12 @@ jobs:
             find . -name "*.rej" -exec echo "--- Archivo: {} ---" \; -exec cat {} \;
             exit 1
           fi
+          cd ../..
+
+          # 7. Forzar la activación en el gki_defconfig para compilar el código inyectado
+          echo "=== Activando configuraciones en gki_defconfig ==="
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
