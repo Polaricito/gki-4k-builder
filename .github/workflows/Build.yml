@@ -17,7 +17,7 @@ jobs:
 
       - name: Clonar Android Common Kernel (GKI 6.6)
         run: |
-          git clone --depth=1 -b android6.6-5.y https://android.googlesource.com/kernel/common kernel-source
+          git clone --depth=1 -b android15-6.6 https://android.googlesource.com/kernel/common kernel-source
 
       - name: Instalar Dependencias y Compilador Clang
         run: |
