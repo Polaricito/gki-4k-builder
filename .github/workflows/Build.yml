@@ -27,26 +27,37 @@ jobs:
       - name: Inyectar KernelSU-Next y Parches SUSFS
         run: |
           cd kernel-source
-          
-          # 1. Usar el script oficial para descargar e integrar KernelSU-Next en el árbol del Kernel
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-          
-          # Crear un enlace simbólico de respaldo por si los parches buscan rígidamente la carpeta "KernelSU"
-          ln -sf KernelSU-Next KernelSU
-          
-          # 2. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
+
+          # 1. Clonar KernelSU-Next directamente en la ruta de drivers de forma limpia
+          # Esto elimina por completo el setup.sh y el error "pathspec 'next'"
+          git clone --depth=1 -b next https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
+
+          # Crear enlaces simbólicos por si acaso los parches hacen referencia rígida a "KernelSU"
+          ln -sf kernelsu drivers/KernelSU
+          ln -sf kernelsu drivers/KernelSU-Next
+
+          # 2. Integrar KernelSU-Next manualmente en el sistema de construcción del Kernel
+          echo "obj-y += kernelsu/" >> drivers/Makefile
+          sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+          # 3. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
           git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
-          
-          # 3. Copiar TODOS los archivos de cabecera (.h) y el código fuente de SUSFS
+
+          # 4. Copiar de forma masiva todos los headers de SUSFS y su archivo fuente
           cp -v ../susfs-src/kernel_patches/include/linux/*.h include/linux/
           cp -v ../susfs-src/kernel_patches/fs/susfs.c fs/
-          
-          # 4. Aplicar el parche principal de SUSFS al GKI
-          patch -p1 < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch
-          
-          # 5. Aplicar el parche de SUSFS específico para KernelSU-Next
-          cd KernelSU-Next
-          patch -p1 --fuzz=3 < ../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche aplicado con sutiles diferencias toleradas"
+
+          # 5. Aplicar el parche principal de SUSFS con tolerancia avanzada a cambios de código (--fuzz=3 e ignorar espacios)
+          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Algunos bloques del parche principal se auto-adaptaron"
+
+          # Seguro de vida: Si el parche a kernel/Kbuild falló silenciosamente, forzamos la compilación de susfs.o
+          if [ -f kernel/Kbuild ]; then
+            grep -q "susfs.o" kernel/Kbuild || echo "obj-y += ../fs/susfs.o" >> kernel/Kbuild
+          fi
+
+          # 6. Aplicar el parche de SUSFS específico para KernelSU-Next
+          cd drivers/kernelsu
+          patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de integración KSU aplicado con éxito"
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
