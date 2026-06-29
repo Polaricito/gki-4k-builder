@@ -1,145 +1,149 @@
-name: Compilar GKI 6.6 con KSU y SUSFS (4KB)
+name: Compilador de Kernel GKI 6.6 con KSU y SUSFS
+
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Permite lanzar la compilación manualmente desde la pestaña Actions
 
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Maximizar espacio de almacenamiento en el servidor
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 5120
-          swap-size-mb: 1024
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-      - name: Maximizar espacio en disco para la compilación
-        run: |
-          echo "=== Espacio inicial en disco ==="
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker system prune -a -f
-          echo "=== Espacio libre tras limpieza ==="
-          df -h
+      - name: Descargar el Repositorio Base
+        uses: actions/checkout@v4
 
-      - name: Clonar Android Common Kernel (GKI 6.6)
-        run: |
-          git clone --depth=1 -b android15-6.6 https://android.googlesource.com/kernel/common kernel-source
-
-      - name: Instalar Dependencias y Compiladores LLVM Nativos
+      - name: Instalar Dependencias y Compiladores Nativos
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git libncurses-dev clang lld llvm gcc-aarch64-linux-gnu
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip
+          # NOTA: Si tu flujo usa un set de herramientas Clang/AOSP específico (ej. prebuilts), 
+          # asegúrate de clonarlo o descargarlo en este bloque.
+
+      - name: Clonar Código Fuente del Kernel
+        run: |
+          # Clonamos tu rama del kernel en la carpeta 'kernel-source'
+          # Reemplaza la URL y la rama por la tuya si no se descarga automáticamente
+          git clone --depth=1 https://github.com/${{ github.repository }} $GITHUB_WORKSPACE/kernel-source
 
       - name: Clonar repositorio SUSFS (GitLab Simonpunk - GKI 6.6)
         run: |
-            # Clonamos directamente usando la ruta absoluta del espacio de trabajo
-            git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git $GITHUB_WORKSPACE/susfs-src
+          # Descarga directa de la rama específica compatible con GKI 6.6 (Android 15)
+          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git $GITHUB_WORKSPACE/susfs-src
 
       - name: Inyectar KernelSU y Parches SUSFS
         run: |
-            # 1. Limpieza absoluta usando rutas fijas
-            rm -rf $GITHUB_WORKSPACE/kernel-source/drivers/kernelsu
-            rm -rf $GITHUB_WORKSPACE/KernelSU
+          # 1. Limpieza absoluta usando rutas fijas globales
+          rm -rf $GITHUB_WORKSPACE/kernel-source/drivers/kernelsu
+          rm -rf $GITHUB_WORKSPACE/KernelSU
 
-            # 2. Clonar KernelSU estándar en la raíz del espacio de trabajo
-            git clone --depth=1 https://github.com/tiann/KernelSU $GITHUB_WORKSPACE/KernelSU
+          # 2. Clonar KernelSU estándar en la raíz del espacio de trabajo
+          git clone --depth=1 https://github.com/tiann/KernelSU $GITHUB_WORKSPACE/KernelSU
 
-            # 3. Crear el enlace simbólico usando rutas absolutas seguras
-            cd $GITHUB_WORKSPACE/kernel-source/drivers
-            ln -sf $GITHUB_WORKSPACE/KernelSU/kernel kernelsu
+          # 3. Crear el enlace simbólico usando rutas absolutas seguras
+          cd $GITHUB_WORKSPACE/kernel-source/drivers
+          ln -sf $GITHUB_WORKSPACE/KernelSU/kernel kernelsu
 
-            # 4. Registrar la ruta en el sistema de compilación
-            cd $GITHUB_WORKSPACE/kernel-source
-            echo "" >> drivers/Makefile
-            grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
-    
-            echo "" >> drivers/Kconfig
-            grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-
-            # 5. Localizar y aplicar el parche de SUSFS para KernelSU dinámicamente
-            cd $GITHUB_WORKSPACE/KernelSU/kernel
-            KSU_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*enable_susfs_for_ksu*.patch" | head -n 1)
-            if [ ! -z "$KSU_PATCH" ]; then
-                   echo "Aplicando parche de KernelSU encontrado en: $KSU_PATCH"
-                patch -p1 --fuzz=3 --ignore-whitespace < "$KSU_PATCH" || echo "Aviso: Ajuste menor en parche de KernelSU"
-            else
-                echo "Aviso: No se encontró un archivo de parche específico para KernelSU, saltando..."
-            fi
-    
-            # 6. Regresar al kernel-source y localizar/aplicar el parche general de SUSFS para GKI 6.6
-            cd $GITHUB_WORKSPACE/kernel-source
-            GKI_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*add_susfs_in_gki*.patch" | head -n 1)
-            if [ ! -z "$GKI_PATCH" ]; then
-                echo "Aplicando parche GKI principal encontrado en: $GKI_PATCH"
-                patch -p1 --fuzz=3 --ignore-whitespace < "$GKI_PATCH" || echo "Aviso: Ajuste menor en parche principal"
-            else
-                echo "Aviso: No se encontró un archivo de parche GKI principal, saltando..."
-            fi
-
-            # 7. Copiar archivos de cabecera y código fuente de SUSFS con detección inteligente
-            echo "== Verificando si los archivos de SUSFS ya existen o necesitan copia =="
-    
-            # Buscamos dónde guardó simonpunk los archivos reales en su repositorio
-            REAL_SUSFS_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.h" | head -n 1)
-            REAL_SUSFS_DEF_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs_def.h" | head -n 1)
-            REAL_SUSFS_C=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.c" | head -n 1)
-
-            # Si el parche no los autogeneró y el archivo existe suelto en el repo clonado, lo copiamos
-            if [ ! -f include/linux/susfs.h ] && [ ! -z "$REAL_SUSFS_H" ]; then
-                echo "Inyectando susfs.h desde: $REAL_SUSFS_H"
-                cp "$REAL_SUSFS_H" include/linux/
-            fi
-
-            if [ ! -f include/linux/susfs_def.h ] && [ ! -z "$REAL_SUSFS_DEF_H" ]; then
-                echo "Inyectando susfs_def.h desde: $REAL_SUSFS_DEF_H"
-                cp "$REAL_SUSFS_DEF_H" include/linux/
-            fi
-
-            if [ ! -f fs/susfs.c ] && [ ! -z "$REAL_SUSFS_C" ]; then
-                echo "Inyectando susfs.c desde: $REAL_SUSFS_C"
-                cp "$REAL_SUSFS_C" fs/
-            fi
-
-            # 8. Asegurar que susfs.o se enlace en el sistema de archivos
-            echo "" >> fs/Makefile
-            grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
-
-      - name: Forzar Configuración (4KB, KernelSU y SUSFS)
-        run: |
-         cd kernel-source
-    
-            # Asegurar el tamaño de página de 4KB
-            echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
-            sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
-            sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
-    
-            # Habilitar de forma limpia las directivas requeridas para compilar e integrar ambos módulos
-            echo "" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
-
-      - name: Compilar Núcleo GKI (Estandar LLVM)
-        run: |
-          cd kernel-source
-          export ARCH=arm64
-          export SUBARCH=arm64
+          # 4. Registrar la ruta en el sistema de compilación del Kernel
+          cd $GITHUB_WORKSPACE/kernel-source
+          echo "" >> drivers/Makefile
+          grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
           
-          # Generamos la configuración base usando el entorno LLVM
-          make O=out LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
-          
-          # Compilamos el kernel completo
-          make -j$(nproc) O=out LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu-
+          echo "" >> drivers/Kconfig
+          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-      - name: Subir Binario Resultante (Artefacto)
+          # 5. Localizar y aplicar el parche de SUSFS para KernelSU dinámicamente
+          cd $GITHUB_WORKSPACE/KernelSU/kernel
+          KSU_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*enable_susfs_for_ksu*.patch" | head -n 1)
+          if [ ! -z "$KSU_PATCH" ]; then
+              echo "Aplicando parche de KernelSU encontrado en: $KSU_PATCH"
+              patch -p1 --fuzz=3 --ignore-whitespace < "$KSU_PATCH" || echo "Aviso: Ajuste menor en parche de KernelSU"
+          else
+              echo "Aviso: No se encontró parche específico para KernelSU, saltando..."
+          fi
+          
+          # 6. Regresar a kernel-source y aplicar el parche general de SUSFS para GKI 6.6
+          cd $GITHUB_WORKSPACE/kernel-source
+          GKI_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*add_susfs_in_gki*.patch" | head -n 1)
+          if [ ! -z "$GKI_PATCH" ]; then
+              echo "Aplicando parche GKI principal encontrado en: $GKI_PATCH"
+              patch -p1 --fuzz=3 --ignore-whitespace < "$GKI_PATCH" || echo "Aviso: Ajuste menor en parche principal"
+          else
+              echo "Aviso: No se encontró parche GKI principal, saltando..."
+          fi
+
+          # 7. Copiar archivos de cabecera y código fuente de SUSFS con detección inteligente
+          echo "== Verificando si los archivos de SUSFS ya existen o necesitan copia =="
+          REAL_SUSFS_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.h" | head -n 1)
+          REAL_SUSFS_DEF_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs_def.h" | head -n 1)
+          REAL_SUSFS_C=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.c" | head -n 1)
+
+          if [ ! -f include/linux/susfs.h ] && [ ! -z "$REAL_SUSFS_H" ]; then
+              echo "Inyectando susfs.h desde: $REAL_SUSFS_H"
+              cp "$REAL_SUSFS_H" include/linux/
+          fi
+
+          if [ ! -f include/linux/susfs_def.h ] && [ ! -z "$REAL_SUSFS_DEF_H" ]; then
+              echo "Inyectando susfs_def.h desde: $REAL_SUSFS_DEF_H"
+              cp "$REAL_SUSFS_DEF_H" include/linux/
+          fi
+
+          if [ ! -f fs/susfs.c ] && [ ! -z "$REAL_SUSFS_C" ]; then
+              echo "Inyectando susfs.c desde: $REAL_SUSFS_C"
+              cp "$REAL_SUSFS_C" fs/
+          fi
+
+          # 8. Asegurar que susfs.o se enlace en el sistema de archivos del kernel
+          echo "" >> fs/Makefile
+          grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
+
+      - name: Configurar Defconfig y Compilar Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel-source
+
+          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad y evitar bootloops
+          echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
+          sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
+
+          # 2. Habilitar banderas estables de KernelSU y SUSFS
+          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+
+          # 3. Lanzar la compilación oficial
+          # Si tu repositorio usa un script nativo (ej: 'build/build.sh'), comenta las siguientes dos líneas de 'make' y pon la tuya.
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gki_defconfig
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- -j$(nproc)
+
+      - name: Empaquetar Kernel con AnyKernel3
+        run: |
+          cd $GITHUB_WORKSPACE
+          # Descargamos la última versión limpia de AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          
+          # Ubicar dinámicamente el binario generado 'Image'
+          KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
+          if [ -z "$KERNEL_IMAGE" ]; then
+              KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
+          fi
+
+          if [ ! -z "$KERNEL_IMAGE" ]; then
+              echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
+              cp "$KERNEL_IMAGE" AnyKernel3/
+              
+              cd AnyKernel3
+              # Desactivar verificación estricta de dispositivo para facilitar el flasheo universal de prueba
+              sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+              sed -i 's/block=\/dev\/block\/bootdevice\/by-name\/boot/block=auto/g' anykernel.sh
+              
+              # Comprimir el instalador listo para TWRP/OrangeFox/KernelFlasher
+              zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_4KB.zip *
+          else
+              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'. Revisa detalladamente los errores de compilación."
+              exit 1
+          fi
+
+      - name: Subir ZIP del Kernel Terminado
         uses: actions/upload-artifact@v4
         with:
-          name: kernel_4k_ksunext_susfs
-          path: kernel-source/out/arch/arm64/boot/Image.gz
-          
+          name: Kernel_GKI_6.6_SUSFS_ZIP_Instalable
+          path: ${{ github.workspace }}/Kernel_GKI_6.6_SUSFS_4KB.zip
