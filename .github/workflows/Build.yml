@@ -87,13 +87,25 @@ jobs:
             grep -q "susfs.o" kernel/Kbuild || echo "obj-y += ../fs/susfs.o" >> kernel/Kbuild
           fi
 
-          # 6. Aplicar el parche de SUSFS específico para KernelSU-Next
-          echo "=== Aplicando parche SUSFS a KernelSU ==="
+          # 6. Aplicar el parche de SUSFS específico para KernelSU-Next usando el motor de Git
+          echo "=== Aplicando parche SUSFS a KernelSU con Git Apply ==="
           cd drivers/kernelsu
-          if ! patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch; then
-            echo "❌ ERROR: El parche de SUSFS para KernelSU falló. Mostrando líneas rechazadas:"
-            find . -name "*.rej" -exec echo "--- Archivo: {} ---" \; -exec cat {} \;
-            exit 1
+
+          # Configurar identidad temporal de Git (necesaria para operaciones de fusión de 3 vías)
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+          # Intentar la aplicación inteligente del parche
+          if ! git apply --3way --whitespace=fix ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch; then
+            echo "⚠️ 'git apply --3way' directo falló. Intentando con método de parches tolerantes..."
+            
+            # Fallback: Si Git no puede fusionarlo limpiamente, intentamos el parche tradicional con fuzz máximo
+            if ! patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch; then
+              echo "❌ ERROR CRÍTICO: El código de KernelSU-Next ha cambiado demasiado respecto al parche de SUSFS."
+              echo "Mostrando los fragmentos rechazados (.rej) para ver los cambios exactos:"
+              find . -name "*.rej" -exec echo "--- Archivo: {} ---" \; -exec cat {} \;
+              exit 1
+            fi
           fi
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
