@@ -35,48 +35,55 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git libncurses-dev clang lld llvm gcc-aarch64-linux-gnu
 
+      - name: Clonar repositorio SUSFS (GitLab Simonpunk - GKI 6.6)
+        run: |
+           cd ..
+            # Clonamos directamente la rama específica para Kernel GKI 6.6 de Android 15
+            git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs-src
+            cd -
+
       - name: Inyectar KernelSU y Parches SUSFS
         run: |
-         cd kernel-source
+           cd kernel-source
 
-             # 1. Limpieza absoluta de intentos anteriores redundantes o erróneos
-             rm -rf drivers/kernelsu
-             rm -rf ../KernelSU
+           # 1. Limpieza absoluta de intentos anteriores redundantes o erróneos
+           rm -rf drivers/kernelsu
+           rm -rf ../KernelSU
 
-             # 2. Clonar KernelSU en la raíz del espacio de trabajo (fuera de drivers)
-             cd ..
-             git clone --depth=1 https://github.com/tiann/KernelSU KernelSU
-             cd kernel-source
+           # 2. Clonar KernelSU estándar en la raíz del espacio de trabajo
+           cd ..
+           git clone --depth=1 https://github.com/tiann/KernelSU KernelSU
+           cd kernel-source
 
-             # 3. Crear el enlace simbólico CORRECTO apuntando directamente a la subcarpeta 'kernel'
-             cd drivers
-             ln -sf ../../KernelSU/kernel kernelsu
-             cd ..
+           # 3. Crear el enlace simbólico apuntando a la subcarpeta 'kernel'
+           cd drivers
+           ln -sf ../../KernelSU/kernel kernelsu
+           cd ..
 
-             # 4. Registrar de manera limpia la ruta en el sistema de compilación
-             echo "" >> drivers/Makefile
-             grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
+           # 4. Registrar la ruta en el sistema de compilación
+           echo "" >> drivers/Makefile
+           grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
     
-             echo "" >> drivers/Kconfig
-             grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+           echo "" >> drivers/Kconfig
+           grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-             # 5. Aplicar el parche de SUSFS diseñado para KernelSU en su directorio real
-             cd ../KernelSU/kernel
-             patch -p1 --fuzz=3 --ignore-whitespace < ../../kernel-source/../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Reajuste menor en parche integrado de KernelSU"
+           # 5. Aplicar el parche de SUSFS para KernelSU en su directorio real
+           cd ../KernelSU/kernel
+           patch -p1 --fuzz=3 --ignore-whitespace < ../../kernel-source/../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Ajuste menor en parche de KernelSU"
     
-             cd ../../kernel-source
+           cd ../../kernel-source
 
-             # 6. Aplicar el parche general de SUSFS para el Kernel GKI 6.6
-             patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Reajuste menor en parche principal"
+           # 6. Aplicar el parche general de SUSFS para el Kernel GKI 6.6
+           patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Ajuste menor en parche principal"
 
-             # 7. Copiar todos los archivos de cabecera y código de SUSFS al árbol del kernel
-             cp ../susfs-src/include/linux/susfs.h include/linux/
-             cp ../susfs-src/include/linux/susfs_def.h include/linux/
-             cp ../susfs-src/fs/susfs.c fs/
+           # 7. Copiar archivos de cabecera y código de SUSFS al árbol del kernel
+           cp ../susfs-src/include/linux/susfs.h include/linux/
+           cp ../susfs-src/include/linux/susfs_def.h include/linux/
+           cp ../susfs-src/fs/susfs.c fs/
 
-             # 8. Asegurar que susfs.o se enlace en el sistema de archivos
-             echo "" >> fs/Makefile
-             grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
+           # 8. Asegurar que susfs.o se enlace en el sistema de archivos
+           echo "" >> fs/Makefile
+           grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
