@@ -28,11 +28,10 @@ jobs:
         run: |
           cd kernel-source
 
-          # 1. Clonar KernelSU-Next directamente en la ruta de drivers de forma limpia
-          # Esto elimina por completo el setup.sh y el error "pathspec 'next'"
-          git clone --depth=1 -b next https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
+          # 1. Clonar KernelSU-Next de forma limpia (usando su rama por defecto automática)
+          git clone --depth=1 https://github.com/rifsxd/KernelSU-Next drivers/kernelsu
 
-          # Crear enlaces simbólicos por si acaso los parches hacen referencia rígida a "KernelSU"
+          # Crear enlaces simbólicos de compatibilidad
           ln -sf kernelsu drivers/KernelSU
           ln -sf kernelsu drivers/KernelSU-Next
 
@@ -43,21 +42,21 @@ jobs:
           # 3. Clonar el repositorio oficial de parches de SUSFS para GKI 6.6
           git clone -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs-src
 
-          # 4. Copiar de forma masiva todos los headers de SUSFS y su archivo fuente
+          # 4. Copiar todos los headers de SUSFS y su archivo fuente
           cp -v ../susfs-src/kernel_patches/include/linux/*.h include/linux/
           cp -v ../susfs-src/kernel_patches/fs/susfs.c fs/
 
-          # 5. Aplicar el parche principal de SUSFS con tolerancia avanzada a cambios de código (--fuzz=3 e ignorar espacios)
-          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Algunos bloques del parche principal se auto-adaptaron"
+          # 5. Aplicar el parche principal de SUSFS con tolerancia avanzada
+          patch -p1 --fuzz=3 --ignore-whitespace < ../susfs-src/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch || echo "Aviso: Bloques de parche auto-adaptados"
 
-          # Seguro de vida: Si el parche a kernel/Kbuild falló silenciosamente, forzamos la compilación de susfs.o
+          # Seguro de vida para susfs.o
           if [ -f kernel/Kbuild ]; then
             grep -q "susfs.o" kernel/Kbuild || echo "obj-y += ../fs/susfs.o" >> kernel/Kbuild
           fi
 
           # 6. Aplicar el parche de SUSFS específico para KernelSU-Next
           cd drivers/kernelsu
-          patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de integración KSU aplicado con éxito"
+          patch -p1 --fuzz=3 --ignore-whitespace < ../../../susfs-src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "Aviso: Parche de integración aplicado"
 
       - name: Forzar Configuración (4KB, KernelSU y SUSFS)
         run: |
