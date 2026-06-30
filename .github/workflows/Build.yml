@@ -42,7 +42,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           git config --global url."https://github.com/".insteadOf git@github.com:
           
-          # Corrección milimétrica de la rama: gki-android15-6.6
+          # Rama corregida milimétricamente
           git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
           cd ${{ env.KERNEL_ROOT }}
@@ -97,7 +97,6 @@ jobs:
           
           TARGET_CONFIG="arch/arm64/configs/$REAL_DEFCONFIG"
 
-          # Habilitar banderas de tamaño, KernelSU y SUSFS
           echo "CONFIG_ARM64_4K_PAGES=y" >> $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
@@ -107,7 +106,6 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # Forzar ganchos de rastreo base
           echo "CONFIG_TRACEPOINTS=y" >> $TARGET_CONFIG
           echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
           echo "CONFIG_HAVE_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
@@ -134,7 +132,7 @@ jobs:
               echo "CONFIG_AFDO=n" >> $TARGET_CONFIG
           fi
 
-      - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
+      - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung Seguros)
         run: |
           cd ${{ env.KERNEL_ROOT }}
           
@@ -142,31 +140,31 @@ jobs:
           mkdir -p "$HOOK_DIR"
           
           if [ ! -f "$HOOK_DIR/mm.h" ]; then
-            echo "Generando stub de emergencia: $HOOK_DIR/mm.h"
-            cat << 'EOF' > "$HOOK_DIR/mm.h"
-#ifndef _TRACE_HOOK_MM_H
-#define _TRACE_HOOK_MM_H
-#include <linux/tracepoint.h>
-
-DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
-DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
-DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
-
-#endif
-EOF
+            echo "Generando stub de emergencia limpio: $HOOK_DIR/mm.h"
+            {
+              echo "#ifndef _TRACE_HOOK_MM_H"
+              echo "#define _TRACE_HOOK_MM_H"
+              echo "#include <linux/tracepoint.h>"
+              echo ""
+              echo "DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));"
+              echo "DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));"
+              echo "DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));"
+              echo ""
+              echo "#endif"
+            } > "$HOOK_DIR/mm.h"
           fi
           
           if [ ! -f "$HOOK_DIR/fs.h" ]; then
-            echo "Generando stub de emergencia: $HOOK_DIR/fs.h"
-            cat << 'EOF' > "$HOOK_DIR/fs.h"
-#ifndef _TRACE_HOOK_FS_H
-#define _TRACE_HOOK_FS_H
-#include <linux/tracepoint.h>
-
-DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
-
-#endif
-EOF
+            echo "Generando stub de emergencia limpio: $HOOK_DIR/fs.h"
+            {
+              echo "#ifndef _TRACE_HOOK_FS_H"
+              echo "#define _TRACE_HOOK_FS_H"
+              echo "#include <linux/tracepoint.h>"
+              echo ""
+              echo "DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));"
+              echo ""
+              echo "#endif"
+            } > "$HOOK_DIR/fs.h"
           fi
 
       - name: Compilar Kernel Oficial Samsung
