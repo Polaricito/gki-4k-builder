@@ -116,15 +116,22 @@ jobs:
 
       - name: Purga Masiva Global de perfiles AFDO (Toda la Raíz del Servidor)
         run: |
-          cd $GITHUB_WORKSPACE
-          echo "Iniciando extirpación quirúrgica de AFDO en cualquier script o Makefile del repositorio..."
+          cd ${{ env.KERNEL_ROOT }}
+          echo "Eliminando referencias AFDO de todos los archivos de configuración..."
           
-          # Asegurarnos de que el runner no tenga rastro del archivo corrupto anterior
+          # 1. Eliminar el archivo por si acaso
           sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
           
-          # Escaneo absoluto sobre cualquier Makefile, script o Kbuild en todo el espacio de trabajo
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' {} + 2>/dev/null || true
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" -o -name "Kbuild*" \) -exec sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' {} + 2>/dev/null || true
+          # 2. Desactivar AFDO en los Makefiles y Kbuild para que Clang no busque el archivo
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' {} + 2>/dev/null || true
+          
+          # 3. Forzar el apagado en el defconfig antes de compilar
+          TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
+          if [ -f "$TARGET_CONFIG" ]; then
+              sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
+              echo "CONFIG_AFDO_OFF=y" >> $TARGET_CONFIG
+              echo "CONFIG_AFDO=n" >> $TARGET_CONFIG
+          fi
 
       - name: Compilar Kernel Oficial Samsung
         run: |
