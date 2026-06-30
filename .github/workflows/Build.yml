@@ -74,36 +74,31 @@ jobs:
 
           echo "Iniciando escaneo para el término: $INPUT_NAME"
 
-          # 1. Comprobación de archivo exacto
           if [ -f "arch/arm64/configs/$INPUT_NAME" ]; then
               REAL_DEFCONFIG="$INPUT_NAME"
-          # 2. Comprobación automática agregando la extensión común
           elif [ -f "arch/arm64/configs/${INPUT_NAME}_defconfig" ]; then
               REAL_DEFCONFIG="${INPUT_NAME}_defconfig"
-          # 3. Búsqueda difusa/parcial en el directorio de configs
           else
               MATCH=$(find arch/arm64/configs/ -type f -iname "*${INPUT_NAME}*" | head -n 1)
               if [ -n "$MATCH" ]; then
                   REAL_DEFCONFIG=$(basename "$MATCH")
               else
-                  # Fallback definitivo: Tomar el primer archivo defconfig que exista
                   ANY_CONFIG=$(find arch/arm64/configs/ -type f -name "*defconfig*" | head -n 1)
                   if [ -n "$ANY_CONFIG" ]; then
                       REAL_DEFCONFIG=$(basename "$ANY_CONFIG")
                   else
-                      echo "ERROR CRÍTICO: No se encontró absolutamente ningún archivo de configuración."
-                      ls -la arch/arm64/configs/
+                      echo "ERROR CRÍTICO: No se encontró ningún archivo de configuración."
                       exit 1
                   fi
               fi
           fi
 
-          echo "¡Defconfig validado y seleccionado!: $REAL_DEFCONFIG"
+          echo "¡Defconfig seleccionado!: $REAL_DEFCONFIG"
           echo "REAL_DEFCONFIG=$REAL_DEFCONFIG" >> $GITHUB_ENV
           
           TARGET_CONFIG="arch/arm64/configs/$REAL_DEFCONFIG"
 
-          # Aplicar parches de tamaño y optimización al archivo detectado
+          # Habilitar banderas de tamaño, KernelSU y SUSFS
           echo "CONFIG_ARM64_4K_PAGES=y" >> $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
@@ -119,10 +114,28 @@ jobs:
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
+      - name: Desactivar y Forzar Bypass de Perfiles AFDO de Samsung
+        run: |
+          cd ${{ env.KERNEL_ROOT }}
+          
+          # 1. Apagar AFDO en la configuración del defconfig
+          TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
+          sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
+          echo "CONFIG_AFDO_OFF=y" >> $TARGET_CONFIG
+          
+          # 2. Limpiar cualquier remanente de flags duros en los Makefiles internos
+          find . -type f -name "Makefile*" -o -name "*.mk" | xargs sed -i 's|-fprofile-sample-use=/kernel_device_modules-6.6/profile/kernel.afdo||g' 2>/dev/null || true
+          find . -type f -name "Makefile*" -o -name "*.mk" | xargs sed -i 's|-fprofile-use=/kernel_device_modules-6.6/profile/kernel.afdo||g' 2>/dev/null || true
+          
+          # 3. Solución raíz: Crear el archivo fantasma en la ruta del servidor para engañar a Clang
+          echo "Creando estructura AFDO dummy de respaldo en la raíz del runner..."
+          sudo mkdir -p /kernel_device_modules-6.6/profile
+          sudo touch /kernel_device_modules-6.6/profile/kernel.afdo
+          sudo chmod 777 /kernel_device_modules-6.6/profile/kernel.afdo
+
       - name: Compilar Kernel Oficial Samsung
         run: |
           cd ${{ env.KERNEL_ROOT }}
-          # Usamos la variable detectada dinámicamente por el paso anterior
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
@@ -158,4 +171,3 @@ jobs:
         with:
           name: Kernel_Samsung_Modificado
           path: ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
-          
