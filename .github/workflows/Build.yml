@@ -110,6 +110,11 @@ jobs:
           echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
           echo "CONFIG_HAVE_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
 
+          # Forzar a FUSE a compilarse estático dentro del Kernel para mitigar errores de modpost
+          sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' $TARGET_CONFIG
+          echo "CONFIG_FUSE_FS=y" >> $TARGET_CONFIG
+          echo "CONFIG_SAMSUNG_DEBUG_FS_LOGGING=n" >> $TARGET_CONFIG
+
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
@@ -138,13 +143,11 @@ jobs:
           if [ -f "mm/io_record.c" ]; then
               echo "Inyectando stubs de mitigación completos y anulando advertencias de desuso..."
               
-              # 1. Forzar el atributo __maybe_unused para evitar que -Werror detenga el build
               sed -i 's/static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/g' mm/io_record.c
               sed -i 's/static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/g' mm/io_record.c
               sed -i 's/static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/g' mm/io_record.c
               sed -i 's/static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/g' mm/io_record.c
           
-              # 2. Creamos el bloque de cabecera de forma segura
               cat << 'EOF' > mm/io_record.headers
           #define register_trace_android_vh_do_read_fault(...) 0
           #define unregister_trace_android_vh_do_read_fault(...) 0
@@ -156,10 +159,24 @@ jobs:
           #define unregister_trace_android_rvh_ksys_umount(...) 0
           EOF
           
-              # 3. Concatenamos el archivo original detrás de nuestros stubs
               cat mm/io_record.c >> mm/io_record.headers
               mv mm/io_record.headers mm/io_record.c
-              echo "¡mm/io_record.c modificado, blindado y protegido contra -Wunused-function!"
+              echo "¡mm/io_record.c modificado y blindado con éxito!"
+          fi
+
+      - name: Reparar error de símbolo fslog_stlog en FUSE (Samsung Custom)
+        run: |
+          cd ${{ env.KERNEL_ROOT }}
+          if [ -f "fs/fuse/inode.c" ]; then
+              echo "Inyectando stub de símbolo débil para fslog_stlog en FUSE..."
+              cat << 'EOF' >> fs/fuse/inode.c
+
+          /* Parche de mitigación para bypass de telemetría faltante de Samsung */
+          void __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
+              /* Stub vacío para satisfacer al enlazador */
+          }
+          EOF
+              echo "¡Símbolo de emergencia fslog_stlog inyectado correctamente!"
           fi
 
       - name: Compilar Kernel Oficial Samsung
@@ -176,6 +193,9 @@ jobs:
               sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
               echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
               echo "CONFIG_TRACEPOINTS=y" >> out/.config
+              
+              # Asegurar FUSE en la configuración final generada
+              sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' out/.config
               
               make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           fi
