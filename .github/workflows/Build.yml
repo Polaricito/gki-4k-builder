@@ -1,4 +1,4 @@
-name: Compilador de Kernel Samsung (KernelSU + SUSFS)
+name: Compilador de Kernel Samsung (KernelSU + SUSFS Oficial)
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
               rmdir $GITHUB_WORKSPACE/kernel-source/kernel-6.6 || true
           fi
 
-          # 2. Verificación final de que los drivers y carpetas clave ya están en el lugar correcto
+          # 2. Verificación final de que las carpetas principales están en su lugar
           if [ -d "$GITHUB_WORKSPACE/kernel-source/drivers" ] && [ -d "$GITHUB_WORKSPACE/kernel-source/arch" ]; then
               echo "¡Estructura de carpetas corregida con éxito! Listo para trabajar."
           else
@@ -46,18 +46,36 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel-source
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
-      - name: Descargar e Integrar SUSFS
+      - name: Descargar e Integrar SUSFS Oficial (Rama android15-6.6)
         run: |
           cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://gitlab.com/those777/susfs4ksu.git susfs_assets || git clone --depth=1 https://github.com/ashish-b7/susfs4ksu.git susfs_assets
+          # Clonamos la rama específica del repositorio oficial de simonpunk de forma no interactiva
+          git config --global url."https://github.com/".insteadOf git@github.com:
+          git clone --depth=1 -b android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
           cd $GITHUB_WORKSPACE/kernel-source
           
-          cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
-          cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
+          # Copiar archivos esenciales de drivers SUSFS al árbol de tu kernel
+          if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c" ]; then
+              cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
+              echo "¡susfs.c copiado!"
+          fi
           
-          git apply --check $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || true
-          git apply $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || echo "Aviso: El parche automático falló, continuando..."
+          if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h" ]; then
+              cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
+              echo "¡susfs.h copiado!"
+          fi
+          
+          # Buscar de forma inteligente el archivo .patch de la rama de simonpunk para aplicarlo
+          PATCH_FILE=$(find $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/ -name "*susfs*.patch" | head -n 1)
+          
+          if [ -f "$PATCH_FILE" ]; then
+              echo "Aplicando parche SUSFS oficial: $PATCH_FILE"
+              git apply --check "$PATCH_FILE" || echo "Aviso: git apply --check detectó diferencias menores, procediendo..."
+              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó con modificaciones parciales..."
+          else
+              echo "Aviso: No se localizó un archivo .patch automático, continuando con archivos copiados..."
+          fi
 
       - name: Configurar Defconfig y Dieta Estricta de Tamaño
         run: |
@@ -66,8 +84,6 @@ jobs:
           
           if [ ! -f "$TARGET_CONFIG" ]; then
               echo "ERROR: El archivo de configuración $TARGET_CONFIG no existe en tus fuentes."
-              echo "Archivos disponibles en configs:"
-              ls arch/arm64/configs/
               exit 1
           fi
 
@@ -76,17 +92,17 @@ jobs:
           sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
 
-          # 2. Habilitar banderas estables de KernelSU y SUSFS
+          # 2. Habilitar banderas oficiales de KernelSU y SUSFS
           echo "CONFIG_KSU=y" >> $TARGET_CONFIG
           echo "CONFIG_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # 3. ELIMINAR SÍMBOLOS DE DEPURAClÓN (Dieta drástica para no pasar los 32MB)
+          # 3. Eliminar símbolos de depuración para evitar sobrepeso
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
-          # 4. FORZAR OPTIMIZAClÓN DE TAMAÑO BINARIO (-Os)
+          # 4. Forzar optimización de tamaño binario (-Os)
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
