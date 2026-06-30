@@ -103,7 +103,7 @@ jobs:
           echo "" >> fs/Makefile
           grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Configurar Defconfig y Compilar Kernel
+      - name: Configurar Defconfig y Compilar Kernel (Dieta Estricta de Tamaño)
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
 
@@ -118,7 +118,15 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-          # 3. Lanzar la compilación
+          # 3. ELIMINAR SÍMBOLOS DE DEPURAClÓN (Reduce ~15MB de golpe)
+          sed -i '/CONFIG_DEBUG_INFO/d' arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEBUG_INFO_NONE=y" >> arch/arm64/configs/gki_defconfig
+
+          # 4. FORZAR OPTIMIZAClÓN DE TAMAÑO (-Os) EN LUGAR DE RENDIMIENTO (-O2)
+          sed -i '/CONFIG_CC_OPTIMIZE/d' arch/arm64/configs/gki_defconfig
+          echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> arch/arm64/configs/gki_defconfig
+
+          # 5. Lanzar la compilación
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
