@@ -143,30 +143,30 @@ jobs:
           
           if [ ! -f "$HOOK_DIR/mm.h" ]; then
             echo "Generando stub de emergencia: $HOOK_DIR/mm.h"
-          cat << 'EOF' > "$HOOK_DIR/mm.h"
-          #ifndef _TRACE_HOOK_MM_H
-          #define _TRACE_HOOK_MM_H
-          #include <linux/tracepoint.h>
+            cat << 'EOF' > "$HOOK_DIR/mm.h"
+#ifndef _TRACE_HOOK_MM_H
+#define _TRACE_HOOK_MM_H
+#include <linux/tracepoint.h>
 
-          DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
-          DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
-          DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
+DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
+DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
+DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
 
-          #endif
-          EOF
+#endif
+EOF
           fi
           
           if [ ! -f "$HOOK_DIR/fs.h" ]; then
             echo "Generando stub de emergencia: $HOOK_DIR/fs.h"
-          cat << 'EOF' > "$HOOK_DIR/fs.h"
-          #ifndef _TRACE_HOOK_FS_H
-          #define _TRACE_HOOK_FS_H
-          #include <linux/tracepoint.h>
+            cat << 'EOF' > "$HOOK_DIR/fs.h"
+#ifndef _TRACE_HOOK_FS_H
+#define _TRACE_HOOK_FS_H
+#include <linux/tracepoint.h>
 
-          DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
+DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
 
-          #endif
-          EOF
+#endif
+EOF
           fi
 
       - name: Compilar Kernel Oficial Samsung
