@@ -1,208 +1,134 @@
-name: Compilador de Kernel GKI 6.6 con KSU y SUSFS
+name: Compilador de Kernel Samsung (KernelSU + SUSFS)
 
 on:
-  workflow_dispatch: # Permite lanzar la compilación manualmente desde la pestaña Actions
-
-# =========================================================================
-# ⚙️ CONFIGURACIÓN GLOBAL
-# =========================================================================
-env:
-  KERNEL_REPO: 'https://android.googlesource.com/kernel/common'
-  KERNEL_BRANCH: 'android15-6.6'
-# =========================================================================
+  workflow_dispatch:
+    inputs:
+      DEFCONFIG_NAME:
+        description: 'Nombre del archivo defconfig de tu Samsung (ej: a05_global_defconfig)'
+        required: true
+        default: 'defconfig'
 
 jobs:
-  build-kernel:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Descargar el Repositorio Base (CI Config)
+      - name: Descargar el Repositorio (CI Config y Fuentes)
         uses: actions/checkout@v4
 
-      - name: Configurar NodeJS v20 (Versión Forzada)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+      - name: Verificar Fuentes del Kernel
+        run: |
+          if [ -d "$GITHUB_WORKSPACE/kernel-source" ]; then
+              echo "¡Carpeta kernel-source detectada con éxito!"
+          else
+              echo "ERROR CRÍTICO: No se encuentra la carpeta 'kernel-source' en la raíz del repositorio."
+              echo "Asegúrate de descomprimir el código de Samsung ahí dentro antes de subirlo."
+              exit 1
+          fi
 
       - name: Instalar Dependencias y Compiladores Nativos
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu python3-pip
+          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu python3
 
-      - name: Clonar Código Fuente del Kernel Real
+      - name: Integrar KernelSU NATIVO
         run: |
-          echo "Clonando código fuente del kernel desde $KERNEL_REPO (Rama: $KERNEL_BRANCH)..."
-          git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} $GITHUB_WORKSPACE/kernel-source
-
-      - name: Clonar repositorio SUSFS (GitLab Simonpunk - GKI 6.6)
-        run: |
-          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git $GITHUB_WORKSPACE/susfs-src
-
-      - name: Inyectar KernelSU y Parches SUSFS
-        run: |
-          # 1. Limpieza absoluta usando rutas fijas globales
-          rm -rf $GITHUB_WORKSPACE/kernel-source/drivers/kernelsu
-          rm -rf $GITHUB_WORKSPACE/KernelSU
-
-          # 2. Clonar KernelSU estándar en la raíz del espacio de trabajo
-          git clone --depth=1 https://github.com/tiann/KernelSU $GITHUB_WORKSPACE/KernelSU
-
-          # 3. Crear el enlace simbólico usando rutas absolutas seguras
-          cd $GITHUB_WORKSPACE/kernel-source/drivers
-          ln -sf $GITHUB_WORKSPACE/KernelSU/kernel kernelsu
-
-          # 4. Registrar la ruta en el sistema de compilación del Kernel
           cd $GITHUB_WORKSPACE/kernel-source
-          echo "" >> drivers/Makefile
-          grep -q "kernelsu/" drivers/Makefile || echo "obj-y += kernelsu/" >> drivers/Makefile
+          # Descarga e integra el código de KernelSU de forma oficial en el árbol del kernel
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+
+      - name: Descargar e Integrar SUSFS
+        run: |
+          cd $GITHUB_WORKSPACE
+          # Clonamos el repositorio de parches SUSFS adaptados para KernelSU
+          git clone --depth=1 https://gitlab.com/ those777/susfs4ksu.git susfs_assets || git clone --depth=1 https://github.com/ashish-b7/susfs4ksu.git susfs_assets
           
-          echo "" >> drivers/Kconfig
-          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '$i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-
-          # 5. Localizar y aplicar el parche de SUSFS para KernelSU dinámicamente
-          cd $GITHUB_WORKSPACE/KernelSU/kernel
-          KSU_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*enable_susfs_for_ksu*.patch" | head -n 1)
-          if [ ! -z "$KSU_PATCH" ]; then
-              echo "Aplicando parche de KernelSU encontrado en: $KSU_PATCH"
-              patch -p1 --fuzz=3 --ignore-whitespace < "$KSU_PATCH" || echo "Aviso: Ajuste menor en parche de KernelSU"
-          else
-              echo "Aviso: No se encontró parche específico para KernelSU, saltando..."
-          fi
-          
-          # 6. Regresar a kernel-source y aplicar el parche general de SUSFS para GKI 6.6
           cd $GITHUB_WORKSPACE/kernel-source
-          GKI_PATCH=$(find $GITHUB_WORKSPACE/susfs-src -name "*add_susfs_in_gki*.patch" | head -n 1)
-          if [ ! -z "$GKI_PATCH" ]; then
-              echo "Aplicando parche GKI principal encontrado en: $GKI_PATCH"
-              patch -p1 --fuzz=3 --ignore-whitespace < "$GKI_PATCH" || echo "Aviso: Ajuste menor en parche principal"
-          else
-              echo "Aviso: No se encontró parche GKI principal, saltando..."
-          fi
+          
+          # Copiar los archivos de drivers SUSFS al árbol del kernel
+          cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
+          cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
+          
+          # Intentar aplicar los parches automáticos a los archivos del sistema de archivos
+          # (Nota: Si tu base de Samsung difiere mucho, estos parches podrían requerir revisión manual en el futuro)
+          git apply --check $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || true
+          git apply $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || echo "Aviso: El parche automático falló, continuando..."
 
-          # 7. Copiar archivos de cabecera y código fuente de SUSFS con detección inteligente
-          echo "== Verificando si los archivos de SUSFS ya existen o necesitan copia =="
-          REAL_SUSFS_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.h" | head -n 1)
-          REAL_SUSFS_DEF_H=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs_def.h" | head -n 1)
-          REAL_SUSFS_C=$(find $GITHUB_WORKSPACE/susfs-src -name "susfs.c" | head -n 1)
-
-          if [ ! -f include/linux/susfs.h ] && [ ! -z "$REAL_SUSFS_H" ]; then
-              echo "Inyectando susfs.h desde: $REAL_SUSFS_H"
-              cp "$REAL_SUSFS_H" include/linux/
-          fi
-
-          if [ ! -f include/linux/susfs_def.h ] && [ ! -z "$REAL_SUSFS_DEF_H" ]; then
-              echo "Inyectando susfs_def.h desde: $REAL_SUSFS_DEF_H"
-              cp "$REAL_SUSFS_DEF_H" include/linux/
-          fi
-
-          if [ ! -f fs/susfs.c ] && [ ! -z "$REAL_SUSFS_C" ]; then
-              echo "Inyectando susfs.c desde: $REAL_SUSFS_C"
-              cp "$REAL_SUSFS_C" fs/
-          fi
-
-          # 8. Asegurar que susfs.o se enlace en el sistema de archivos del kernel
-          echo "" >> fs/Makefile
-          grep -q "susfs.o" fs/Makefile || echo "obj-y += susfs.o" >> fs/Makefile
-
-      - name: Configurar Defconfig y Compilar Kernel (Dieta Estricta de Tamaño)
+      - name: Configurar Defconfig y Dieta Estricta de Tamaño
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
+          TARGET_CONFIG="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}"
+          
+          if [ ! -f "$TARGET_CONFIG" ]; then
+              echo "ERROR: El archivo de configuración $TARGET_CONFIG no existe en tus fuentes."
+              echo "Archivos disponibles en configs:"
+              ls arch/arm64/configs/
+              exit 1
+          fi
 
-          # 1. Forzar tamaño de página a 4KB para máxima compatibilidad
-          echo "CONFIG_ARM64_4K_PAGES=y" >> arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_ARM64_16K_PAGES/d' arch/arm64/configs/gki_defconfig
-          sed -i '/CONFIG_ARM64_64K_PAGES/d' arch/arm64/configs/gki_defconfig
+          # 1. Asegurar tamaño de página de memoria a 4KB
+          echo "CONFIG_ARM64_4K_PAGES=y" >> $TARGET_CONFIG
+          sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
+          sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
 
           # 2. Habilitar banderas estables de KernelSU y SUSFS
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU=y" >> $TARGET_CONFIG
+          echo "CONFIG_SUSFS=y" >> $TARGET_CONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # 3. ELIMINAR SÍMBOLOS DE DEPURAClÓN (Reduce ~15MB de golpe)
-          sed -i '/CONFIG_DEBUG_INFO/d' arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEBUG_INFO_NONE=y" >> arch/arm64/configs/gki_defconfig
+          # 3. ELIMINAR SÍMBOLOS DE DEPURAClÓN (Dieta drástica para no pasar los 32MB)
+          sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
+          echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
-          # 4. FORZAR OPTIMIZAClÓN DE TAMAÑO (-Os) EN LUGAR DE RENDIMIENTO (-O2)
-          sed -i '/CONFIG_CC_OPTIMIZE/d' arch/arm64/configs/gki_defconfig
-          echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> arch/arm64/configs/gki_defconfig
+          # 4. FORZAR OPTIMIZAClÓN DE TAMAÑO BINARIO (-Os)
+          sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
+          echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
-          # 5. Lanzar la compilación
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+      - name: Compilar Kernel Oficial Samsung
+        run: |
+          cd $GITHUB_WORKSPACE/kernel-source
+          
+          # Preparar la configuración base elegida
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ github.event.inputs.DEFCONFIG_NAME }}
+          
+          # Compilar usando todos los hilos del procesador virtual de GitHub
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
-      - name: Empaquetar Kernel (AnyKernel3 y boot.img directo)
+      - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
         run: |
           cd $GITHUB_WORKSPACE
           
-          # 1. Localizar el archivo binario 'Image' compilado
+          # 1. Localizar el binario de salida del Kernel compilado
           KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
               KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
           fi
 
           if [ -z "$KERNEL_IMAGE" ]; then
-              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
+              echo "ERROR CRÍTICO: No se generó el archivo 'Image' durante la compilación."
               exit 1
           fi
           echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
 
-          # =========================================================================
-          # ALTERNATIVA A: Generar un boot.img GKI directo con mkbootimg de Google
-          # =========================================================================
-          echo "Descargando herramientas oficiales de AOSP..."
-          MKBOOT_AVAILABLE=0
-          
-          # Agregamos protección para que si wget falla con código 8, el script continúe
-          if wget -q --timeout=10 https://raw.githubusercontent.com/aosp-mirror/platform_system_tools_mkbootimg/master/mkbootimg.py; then
-              chmod +x mkbootimg.py
-              MKBOOT_AVAILABLE=1
-              echo "mkbootimg.py descargado correctamente."
-          else
-              echo "Aviso: No se pudo descargar mkbootimg.py (Error de red/servidor). Se saltará al plan de respaldo."
-          fi
-          
-          # Crear un ramdisk vacío comprimido estructuralmente válido (Evita errores internos de Python)
-          echo -n "" | gzip -n > ramdisk.empty
-          
-          echo "Intentando empaquetar boot.img estándar..."
-          # Solo se ejecuta mkbootimg si se descargó con éxito; de lo contrario va directo al else
-          if [ "$MKBOOT_AVAILABLE" = "1" ] && python3 mkbootimg.py \
-            --kernel "$KERNEL_IMAGE" \
-            --ramdisk ramdisk.empty \
-            --header_version 4 \
-            --pagesize 4096 \
-            --base 0x0 \
-            --output $GITHUB_WORKSPACE/boot.img 2>&1; then
-              echo "¡boot.img independiente generado con éxito!"
-          else
-              echo "Aviso: mkbootimg no disponible o falló. Aplicando volcado directo seguro de la Image..."
-              cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/boot.img
-          fi
-
-          # =========================================================================
-          # ALTERNATIVA B: Preparar AnyKernel3 corregido para la ruta de Samsung
-          # =========================================================================
-          echo "Clonando y configurando AnyKernel3 para Samsung..."
+          # 2. Clonar y preparar AnyKernel3 enfocado en la ruta de bloques de Samsung
           rm -rf AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           cp "$KERNEL_IMAGE" AnyKernel3/Image
           cd AnyKernel3
           
-          # Desactivar la verificación estricta de nombre de dispositivo
+          # Modificaciones de script seguras para flashear sin bloqueos de firma/nombre
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          
-          # Forzar la ruta real de bloques de Samsung by-name en todas las variantes posibles
           sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
-          # Comprimir el ZIP final listo para TWRP
-          zip -r9 $GITHUB_WORKSPACE/Kernel_GKI_6.6_SUSFS_Samsung.zip *
-          echo "¡ZIP de AnyKernel3 empaquetado exitosamente!"
+          # Generar archivo comprimido final para TWRP
+          zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
+          echo "¡ZIP de AnyKernel3 creado exitosamente!"
 
-      - name: Subir Artefactos del Kernel Completados
+      - name: Subir Artefacto Compilado a GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_GKI_6.6_Samsung_A05M
-          path: |
-            ${{ github.workspace }}/Kernel_GKI_6.6_SUSFS_Samsung.zip
-            ${{ github.workspace }}/boot.img
+          name: Kernel_Samsung_Modificado
+          path: ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
+          
