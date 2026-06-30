@@ -108,24 +108,27 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
+          # SOLUCIÓN MM/IO_RECORD: Forzar la activación de los ganchos de rastreo de Android nativos
+          echo "CONFIG_TRACEPOINTS=y" >> $TARGET_CONFIG
+          echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
+
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
-      - name: Purga Masiva Global de perfiles AFDO (Toda la Raíz del Servidor)
+      - name: Purga Inteligente de perfiles AFDO (Sin Daño Colateral)
         run: |
           cd ${{ env.KERNEL_ROOT }}
-          echo "Eliminando referencias AFDO de todos los archivos de configuración..."
+          echo "Eliminando referencias AFDO físicas de la configuración..."
           
-          # 1. Eliminar el archivo por si acaso
+          # Eliminar rastro del archivo en el sistema
           sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
           
-          # 2. Desactivar AFDO en los Makefiles y Kbuild para que Clang no busque el archivo
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' {} + 2>/dev/null || true
+          # SOLUCIÓN MAKEFILE: Exclusión de caracteres especiales (%,) para no romper la sintaxis filter-out
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]%,]+//g' {} + 2>/dev/null || true
           
-          # 3. Forzar el apagado en el defconfig antes de compilar
           TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
           if [ -f "$TARGET_CONFIG" ]; then
               sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
@@ -140,18 +143,23 @@ jobs:
           # 1. Generar el archivo temporal out/.config inicial
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
           
-          # 2. INTERCEPCIÓN EN CALIENTE: Forzar el apagado definitivo dentro de out/ antes de que Clang despierte
+          # 2. INTERCEPCIÓN EN CALIENTE: Forzar configuraciones correctas antes de despertar a Clang
           if [ -f "out/.config" ]; then
               echo "¡Interceptando archivo de compilación out/.config generado!"
               sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
               sed -i '/CONFIG_AFDO_OFF/d' out/.config
               echo "CONFIG_AFDO_OFF=y" >> out/.config
               
-              # Forzar al sistema a re-organizar las dependencias internas basándose en nuestro cambio manual
+              # Asegurar ganchos de Android activos también en la salida de compilación
+              sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
+              echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
+              echo "CONFIG_TRACEPOINTS=y" >> out/.config
+              
+              # Forzar al sistema a re-organizar las dependencias internas
               make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           fi
           
-          # 3. Lanzar la compilación pesada ahora que el motor de optimización está 100% destruido
+          # 3. Lanzar la compilación pesada
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
