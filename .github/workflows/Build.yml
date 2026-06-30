@@ -132,88 +132,19 @@ jobs:
               echo "CONFIG_AFDO=n" >> $TARGET_CONFIG
           fi
 
-      - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung Seguros)
+      - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
         run: |
           cd ${{ env.KERNEL_ROOT }}
-          
-          HOOK_DIR="include/trace/hooks"
-          mkdir -p "$HOOK_DIR"
-          
-          if [ ! -f "$HOOK_DIR/mm.h" ]; then
-            echo "Generando stub de emergencia limpio: $HOOK_DIR/mm.h"
-            {
-              echo "#ifndef _TRACE_HOOK_MM_H"
-              echo "#define _TRACE_HOOK_MM_H"
-              echo "#include <linux/tracepoint.h>"
-              echo ""
-              echo "DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));"
-              echo "DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));"
-              echo "DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));"
-              echo ""
-              echo "#endif"
-            } > "$HOOK_DIR/mm.h"
-          fi
-          
-          if [ ! -f "$HOOK_DIR/fs.h" ]; then
-            echo "Generando stub de emergencia limpio: $HOOK_DIR/fs.h"
-            {
-              echo "#ifndef _TRACE_HOOK_FS_H"
-              echo "#define _TRACE_HOOK_FS_H"
-              echo "#include <linux/tracepoint.h>"
-              echo ""
-              echo "DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));"
-              echo ""
-              echo "#endif"
-            } > "$HOOK_DIR/fs.h"
-          fi
-
-      - name: Compilar Kernel Oficial Samsung
-        run: |
-          cd ${{ env.KERNEL_ROOT }}
-          
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
-          
-          if [ -f "out/.config" ]; then
-              sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
-              sed -i '/CONFIG_AFDO_OFF/d' out/.config
-              echo "CONFIG_AFDO_OFF=y" >> out/.config
-              
-              sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
-              echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
-              echo "CONFIG_TRACEPOINTS=y" >> out/.config
-              
-              make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-          fi
-          
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
-
-      - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
-        run: |
-          cd $GITHUB_WORKSPACE
-          
-          KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
-          if [ -z "$KERNEL_IMAGE" ]; then
-              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name "Image" | head -n 1)
-          fi
-
-          if [ -z "$KERNEL_IMAGE" ]; then
-              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
-              exit 1
-          fi
-
-          rm -rf AnyKernel3
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          cp "$KERNEL_IMAGE" AnyKernel3/Image
-          cd AnyKernel3
-          
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
-          sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
-          
-          zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
-
-      - name: Subir Artefacto Compilado a GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kernel_Samsung_Modificado
-          path: ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
+          if [ -f "mm/io_record.c" ]; then
+              echo "Inyectando stubs de mitigación directamente en mm/io_record.c..."
+              {
+                echo "#define register_trace_android_vh_do_read_fault(...) 0"
+                echo "#define unregister_trace_android_vh_do_read_fault(...) 0"
+                echo "#define register_trace_android_vh_filemap_map_pages(...) 0"
+                echo "#define unregister_trace_android_vh_filemap_map_pages(...) 0"
+                echo "#define register_trace_android_vh_filemap_read(...) 0"
+                echo "#define unregister_trace_android_vh_filemap_read(...) 0"
+                echo "#define register_trace_android_rvh_ksys_umount(...) 0"
+                echo "#define unregister_trace_android_rvh_ksys_umount(...) 0"
+              } > mm/io_record.tmp
+              cat mm/io
