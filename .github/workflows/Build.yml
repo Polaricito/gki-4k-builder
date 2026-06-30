@@ -118,20 +118,23 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           
-          # 1. Apagar AFDO en la configuración del defconfig
+          # 1. Eliminar por completo el archivo dummy del sistema para evitar el error de formato corrupto
+          sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
+          
+          # 2. Apagar AFDO en la configuración interna del defconfig
           TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
           sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
           echo "CONFIG_AFDO_OFF=y" >> $TARGET_CONFIG
           
-          # 2. Limpiar cualquier remanente de flags duros en los Makefiles internos
-          find . -type f -name "Makefile*" -o -name "*.mk" | xargs sed -i 's|-fprofile-sample-use=/kernel_device_modules-6.6/profile/kernel.afdo||g' 2>/dev/null || true
-          find . -type f -name "Makefile*" -o -name "*.mk" | xargs sed -i 's|-fprofile-use=/kernel_device_modules-6.6/profile/kernel.afdo||g' 2>/dev/null || true
+          # 3. Extirpación quirúrgica global usando grep directo sobre el código fuente
+          echo "Iniciando purga total de flags '-fprofile-sample-use' y '-fprofile-use'..."
           
-          # 3. Solución raíz: Crear el archivo fantasma en la ruta del servidor para engañar a Clang
-          echo "Creando estructura AFDO dummy de respaldo en la raíz del runner..."
-          sudo mkdir -p /kernel_device_modules-6.6/profile
-          sudo touch /kernel_device_modules-6.6/profile/kernel.afdo
-          sudo chmod 777 /kernel_device_modules-6.6/profile/kernel.afdo
+          # Encontrar todos los archivos que tengan referencias y limpiar el flag molesto
+          grep -rl "kernel.afdo" . 2>/dev/null | xargs sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' 2>/dev/null || true
+          grep -rl "fprofile-" . 2>/dev/null | xargs sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' 2>/dev/null || true
+          
+          # Forzar desactivación manual de variables de control AFDO en scripts de compilación
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" \) -exec sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' {} + 2>/dev/null || true
 
       - name: Compilar Kernel Oficial Samsung
         run: |
