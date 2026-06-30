@@ -16,24 +16,16 @@ jobs:
       - name: Descargar el Repositorio (CI Config y Fuentes)
         uses: actions/checkout@v4
 
-      - name: Verificar y Corregir Estructura de Fuentes (Auto-Aplanar kernel-6.6)
+      - name: Detectar Estructura Dinámica de Fuentes (Evitar errores de rutas)
+        id: parse-root
         run: |
-          # 1. Si los archivos están atrapados dentro de 'kernel-6.6', los movemos a la raíz de 'kernel-source'
+          # Detectamos de forma inteligente si Samsung metió todo dentro de kernel-6.6
           if [ -d "$GITHUB_WORKSPACE/kernel-source/kernel-6.6" ]; then
-              echo "¡Estructura anidada detectada (kernel-6.6)! Aplanando carpetas automáticamente..."
-              mv $GITHUB_WORKSPACE/kernel-source/kernel-6.6/* $GITHUB_WORKSPACE/kernel-source/ 2>/dev/null || true
-              mv $GITHUB_WORKSPACE/kernel-source/kernel-6.6/.* $GITHUB_WORKSPACE/kernel-source/ 2>/dev/null || true
-              rmdir $GITHUB_WORKSPACE/kernel-source/kernel-6.6 || true
-          fi
-
-          # 2. Verificación final de que las carpetas principales están en su lugar
-          if [ -d "$GITHUB_WORKSPACE/kernel-source/drivers" ] && [ -d "$GITHUB_WORKSPACE/kernel-source/arch" ]; then
-              echo "¡Estructura de carpetas corregida con éxito! Listo para trabajar."
+              echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel-source/kernel-6.6" >> $GITHUB_ENV
+              echo "¡Estructura de Samsung detectada! Compilando desde subcarpeta kernel-6.6"
           else
-              echo "ERROR CRÍTICO: No se encuentra la estructura base del kernel (arch/ o drivers/) en la raíz de kernel-source."
-              echo "Contenido actual de kernel-source:"
-              ls -la $GITHUB_WORKSPACE/kernel-source
-              exit 1
+              echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel-source" >> $GITHUB_ENV
+              echo "¡Estructura estándar detectada! Compilando desde la raíz de kernel-source"
           fi
 
       - name: Instalar Dependencias y Compiladores Nativos
@@ -43,49 +35,50 @@ jobs:
 
       - name: Integrar KernelSU NATIVO
         run: |
-          cd $GITHUB_WORKSPACE/kernel-source
+          cd ${{ env.KERNEL_ROOT }}
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
       - name: Descargar e Integrar SUSFS Oficial (Rama gki-android15-6.6)
         run: |
           cd $GITHUB_WORKSPACE
-          # Forzar a git a usar HTTPS limpio para evitar prompts interactivos
           git config --global url."https://github.com/".insteadOf git@github.com:
           
-          # CLONACIÓN CORREGIDA: Apuntando a la rama real 'gki-android15-6.6'
+          # Clonando la rama oficial correcta de simonpunk
           git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
-          cd $GITHUB_WORKSPACE/kernel-source
+          cd ${{ env.KERNEL_ROOT }}
           
-          # Copiar archivos esenciales de drivers SUSFS al árbol de tu kernel
+          # Copiar archivos de drivers SUSFS a la raíz dinámica del árbol de tu kernel
           if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c" ]; then
               cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
-              echo "¡susfs.c copiado exitosamente!"
+              echo "¡susfs.c inyectado con éxito!"
           fi
           
           if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h" ]; then
               cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
-              echo "¡susfs.h copiado exitosamente!"
+              echo "¡susfs.h inyectado con éxito!"
           fi
           
-          # Búsqueda inteligente y aplicación del archivo .patch oficial para el kernel 6.6
+          # Buscar el parche oficial correspondiente dentro del clon para aplicarlo
           PATCH_FILE=$(find $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/ -name "*susfs*.patch" | head -n 1)
           
           if [ -f "$PATCH_FILE" ]; then
-              echo "Aplicando parche SUSFS oficial detectado: $PATCH_FILE"
-              git apply --check "$PATCH_FILE" || echo "Aviso: git apply --check detectó diferencias menores, procediendo con parches parciales..."
-              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó con modificaciones manuales o parciales..."
+              echo "Aplicando parche SUSFS oficial: $PATCH_FILE"
+              git apply --check "$PATCH_FILE" || echo "Aviso: git apply detectó desfases menores, forzando aplicación parcial..."
+              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó..."
           else
-              echo "Aviso: No se localizó un archivo .patch automatizado, se continuará usando la inyección directa de archivos de cabecera."
+              echo "Aviso: No se localizó un archivo .patch automatizado, se usará la inyección directa."
           fi
 
       - name: Configurar Defconfig y Dieta Estricta de Tamaño
         run: |
-          cd $GITHUB_WORKSPACE/kernel-source
+          cd ${{ env.KERNEL_ROOT }}
           TARGET_CONFIG="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}"
           
           if [ ! -f "$TARGET_CONFIG" ]; then
-              echo "ERROR: El archivo de configuración $TARGET_CONFIG no existe en tus fuentes."
+              echo "ERROR: El archivo de configuración $TARGET_CONFIG no existe."
+              echo "Archivos disponibles en tus fuentes actuales:"
+              ls arch/arm64/configs/
               exit 1
           fi
 
@@ -100,7 +93,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # 3. Eliminar símbolos de depuración para evitar sobrepeso en la partición boot
+          # 3. Eliminar símbolos de depuración para evitar sobrepeso
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
@@ -110,7 +103,7 @@ jobs:
 
       - name: Compilar Kernel Oficial Samsung
         run: |
-          cd $GITHUB_WORKSPACE/kernel-source
+          cd ${{ env.KERNEL_ROOT }}
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ github.event.inputs.DEFCONFIG_NAME }}
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
@@ -118,16 +111,17 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           
-          KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
+          # Buscar la imagen compilada dentro de la ruta raíz dinámica
+          KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
-              KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
+              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name "Image" | head -n 1)
           fi
 
           if [ -z "$KERNEL_IMAGE" ]; then
-              echo "ERROR CRÍTICO: No se generó el archivo 'Image' durante la compilación."
+              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image' de salida."
               exit 1
           fi
-          echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
+          echo "¡Kernel Image localizado exitosamente en: $KERNEL_IMAGE!"
 
           rm -rf AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
