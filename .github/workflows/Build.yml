@@ -46,35 +46,37 @@ jobs:
           cd $GITHUB_WORKSPACE/kernel-source
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
-      - name: Descargar e Integrar SUSFS Oficial (Rama android15-6.6)
+      - name: Descargar e Integrar SUSFS Oficial (Rama gki-android15-6.6)
         run: |
           cd $GITHUB_WORKSPACE
-          # Clonamos la rama específica del repositorio oficial de simonpunk de forma no interactiva
+          # Forzar a git a usar HTTPS limpio para evitar prompts interactivos
           git config --global url."https://github.com/".insteadOf git@github.com:
-          git clone --depth=1 -b android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
+          
+          # CLONACIÓN CORREGIDA: Apuntando a la rama real 'gki-android15-6.6'
+          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
           cd $GITHUB_WORKSPACE/kernel-source
           
           # Copiar archivos esenciales de drivers SUSFS al árbol de tu kernel
           if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c" ]; then
               cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
-              echo "¡susfs.c copiado!"
+              echo "¡susfs.c copiado exitosamente!"
           fi
           
           if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h" ]; then
               cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
-              echo "¡susfs.h copiado!"
+              echo "¡susfs.h copiado exitosamente!"
           fi
           
-          # Buscar de forma inteligente el archivo .patch de la rama de simonpunk para aplicarlo
+          # Búsqueda inteligente y aplicación del archivo .patch oficial para el kernel 6.6
           PATCH_FILE=$(find $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/ -name "*susfs*.patch" | head -n 1)
           
           if [ -f "$PATCH_FILE" ]; then
-              echo "Aplicando parche SUSFS oficial: $PATCH_FILE"
-              git apply --check "$PATCH_FILE" || echo "Aviso: git apply --check detectó diferencias menores, procediendo..."
-              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó con modificaciones parciales..."
+              echo "Aplicando parche SUSFS oficial detectado: $PATCH_FILE"
+              git apply --check "$PATCH_FILE" || echo "Aviso: git apply --check detectó diferencias menores, procediendo con parches parciales..."
+              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó con modificaciones manuales o parciales..."
           else
-              echo "Aviso: No se localizó un archivo .patch automático, continuando con archivos copiados..."
+              echo "Aviso: No se localizó un archivo .patch automatizado, se continuará usando la inyección directa de archivos de cabecera."
           fi
 
       - name: Configurar Defconfig y Dieta Estricta de Tamaño
@@ -98,7 +100,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # 3. Eliminar símbolos de depuración para evitar sobrepeso
+          # 3. Eliminar símbolos de depuración para evitar sobrepeso en la partición boot
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
