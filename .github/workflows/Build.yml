@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       DEFCONFIG_NAME:
-        description: 'Nombre del archivo defconfig de tu Samsung (ej: a05_global_defconfig)'
+        description: 'Nombre del archivo defconfig de tu Samsung'
         required: true
         default: 'defconfig'
 
@@ -16,13 +16,23 @@ jobs:
       - name: Descargar el Repositorio (CI Config y Fuentes)
         uses: actions/checkout@v4
 
-      - name: Verificar Fuentes del Kernel
+      - name: Verificar y Corregir Estructura de Fuentes (Auto-Aplanar kernel-6.6)
         run: |
-          if [ -d "$GITHUB_WORKSPACE/kernel-source" ]; then
-              echo "¡Carpeta kernel-source detectada con éxito!"
+          # 1. Si los archivos están atrapados dentro de 'kernel-6.6', los movemos a la raíz de 'kernel-source'
+          if [ -d "$GITHUB_WORKSPACE/kernel-source/kernel-6.6" ]; then
+              echo "¡Estructura anidada detectada (kernel-6.6)! Aplanando carpetas automáticamente..."
+              mv $GITHUB_WORKSPACE/kernel-source/kernel-6.6/* $GITHUB_WORKSPACE/kernel-source/ 2>/dev/null || true
+              mv $GITHUB_WORKSPACE/kernel-source/kernel-6.6/.* $GITHUB_WORKSPACE/kernel-source/ 2>/dev/null || true
+              rmdir $GITHUB_WORKSPACE/kernel-source/kernel-6.6 || true
+          fi
+
+          # 2. Verificación final de que los drivers y carpetas clave ya están en el lugar correcto
+          if [ -d "$GITHUB_WORKSPACE/kernel-source/drivers" ] && [ -d "$GITHUB_WORKSPACE/kernel-source/arch" ]; then
+              echo "¡Estructura de carpetas corregida con éxito! Listo para trabajar."
           else
-              echo "ERROR CRÍTICO: No se encuentra la carpeta 'kernel-source' en la raíz del repositorio."
-              echo "Asegúrate de descomprimir el código de Samsung ahí dentro antes de subirlo."
+              echo "ERROR CRÍTICO: No se encuentra la estructura base del kernel (arch/ o drivers/) en la raíz de kernel-source."
+              echo "Contenido actual de kernel-source:"
+              ls -la $GITHUB_WORKSPACE/kernel-source
               exit 1
           fi
 
@@ -34,23 +44,18 @@ jobs:
       - name: Integrar KernelSU NATIVO
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
-          # Descarga e integra el código de KernelSU de forma oficial en el árbol del kernel
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
       - name: Descargar e Integrar SUSFS
         run: |
           cd $GITHUB_WORKSPACE
-          # Clonamos el repositorio de parches SUSFS adaptados para KernelSU
-          git clone --depth=1 https://gitlab.com/ those777/susfs4ksu.git susfs_assets || git clone --depth=1 https://github.com/ashish-b7/susfs4ksu.git susfs_assets
+          git clone --depth=1 https://gitlab.com/those777/susfs4ksu.git susfs_assets || git clone --depth=1 https://github.com/ashish-b7/susfs4ksu.git susfs_assets
           
           cd $GITHUB_WORKSPACE/kernel-source
           
-          # Copiar los archivos de drivers SUSFS al árbol del kernel
           cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
           cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
           
-          # Intentar aplicar los parches automáticos a los archivos del sistema de archivos
-          # (Nota: Si tu base de Samsung difiere mucho, estos parches podrían requerir revisión manual en el futuro)
           git apply --check $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || true
           git apply $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/5.10/0001-ksu_susfs-add-susfs-to-kernel.patch || echo "Aviso: El parche automático falló, continuando..."
 
@@ -88,18 +93,13 @@ jobs:
       - name: Compilar Kernel Oficial Samsung
         run: |
           cd $GITHUB_WORKSPACE/kernel-source
-          
-          # Preparar la configuración base elegida
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ github.event.inputs.DEFCONFIG_NAME }}
-          
-          # Compilar usando todos los hilos del procesador virtual de GitHub
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
         run: |
           cd $GITHUB_WORKSPACE
           
-          # 1. Localizar el binario de salida del Kernel compilado
           KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
               KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/kernel-source -name "Image" | head -n 1)
@@ -111,18 +111,15 @@ jobs:
           fi
           echo "¡Kernel Image detectado exitosamente en: $KERNEL_IMAGE!"
 
-          # 2. Clonar y preparar AnyKernel3 enfocado en la ruta de bloques de Samsung
           rm -rf AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
           cp "$KERNEL_IMAGE" AnyKernel3/Image
           cd AnyKernel3
           
-          # Modificaciones de script seguras para flashear sin bloqueos de firma/nombre
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
           sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
-          # Generar archivo comprimido final para TWRP
           zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
           echo "¡ZIP de AnyKernel3 creado exitosamente!"
 
