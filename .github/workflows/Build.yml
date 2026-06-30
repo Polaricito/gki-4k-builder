@@ -72,8 +72,6 @@ jobs:
           INPUT_NAME="${{ github.event.inputs.DEFCONFIG_NAME }}"
           REAL_DEFCONFIG=""
 
-          echo "Iniciando escaneo para el término: $INPUT_NAME"
-
           if [ -f "arch/arm64/configs/$INPUT_NAME" ]; then
               REAL_DEFCONFIG="$INPUT_NAME"
           elif [ -f "arch/arm64/configs/${INPUT_NAME}_defconfig" ]; then
@@ -108,9 +106,10 @@ jobs:
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # SOLUCIÓN MM/IO_RECORD: Forzar la activación de los ganchos de rastreo de Android nativos
+          # Forzar ganchos de rastreo base
           echo "CONFIG_TRACEPOINTS=y" >> $TARGET_CONFIG
           echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
+          echo "CONFIG_HAVE_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
 
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
@@ -118,16 +117,15 @@ jobs:
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
-      - name: Purga Inteligente de perfiles AFDO (Sin Daño Colateral)
+      - name: Purga Inteligente de perfiles AFDO (Protección de Sintaxis)
         run: |
           cd ${{ env.KERNEL_ROOT }}
           echo "Eliminando referencias AFDO físicas de la configuración..."
           
-          # Eliminar rastro del archivo en el sistema
           sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
           
-          # SOLUCIÓN MAKEFILE: Exclusión de caracteres especiales (%,) para no romper la sintaxis filter-out
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]%,]+//g' {} + 2>/dev/null || true
+          # SOLUCIÓN COMPLETA: Excluye explícitamente comas (,) y paréntesis de cierre ()) para preservar filter-out
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:],)]*//g' {} + 2>/dev/null || true
           
           TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
           if [ -f "$TARGET_CONFIG" ]; then
@@ -136,30 +134,63 @@ jobs:
               echo "CONFIG_AFDO=n" >> $TARGET_CONFIG
           fi
 
+      - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
+        run: |
+          cd ${{ env.KERNEL_ROOT }}
+          
+          HOOK_DIR="include/trace/hooks"
+          mkdir -p "$HOOK_DIR"
+          
+          # Inyectar stubs con indentación segura para proteger la estructura del YAML
+          if [ ! -f "$HOOK_DIR/mm.h" ]; then
+            echo "Generando stub de emergencia: $HOOK_DIR/mm.h"
+            cat << 'EOF' > "$HOOK_DIR/mm.h"
+            #ifndef _TRACE_HOOK_MM_H
+            #define _TRACE_HOOK_MM_H
+            #include <linux/tracepoint.h>
+
+            DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
+            DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
+            DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
+
+            #endif
+            EOF
+          fi
+          
+          if [ ! -f "$HOOK_DIR/fs.h" ]; then
+            echo "Generando stub de emergencia: $HOOK_DIR/fs.h"
+            cat << 'EOF' > "$HOOK_DIR/fs.h"
+            #ifndef _TRACE_HOOK_FS_H
+            #define _TRACE_HOOK_FS_H
+            #include <linux/tracepoint.h>
+
+            DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
+
+            #endif
+            EOF
+          fi
+
       - name: Compilar Kernel Oficial Samsung
         run: |
           cd ${{ env.KERNEL_ROOT }}
           
-          # 1. Generar el archivo temporal out/.config inicial
+          # 1. Generar out/.config inicial
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
           
-          # 2. INTERCEPCIÓN EN CALIENTE: Forzar configuraciones correctas antes de despertar a Clang
+          # 2. Intercepción en caliente avanzada
           if [ -f "out/.config" ]; then
-              echo "¡Interceptando archivo de compilación out/.config generado!"
               sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
               sed -i '/CONFIG_AFDO_OFF/d' out/.config
               echo "CONFIG_AFDO_OFF=y" >> out/.config
               
-              # Asegurar ganchos de Android activos también en la salida de compilación
               sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
               echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
               echo "CONFIG_TRACEPOINTS=y" >> out/.config
               
-              # Forzar al sistema a re-organizar las dependencias internas
               make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
           fi
           
-          # 3. Lanzar la compilación pesada
+          # 3. Compilación en paralelo completa
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
@@ -172,10 +203,9 @@ jobs:
           fi
 
           if [ -z "$KERNEL_IMAGE" ]; then
-              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image' de salida."
+              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
               exit 1
           fi
-          echo "¡Kernel Image localizado exitosamente en: $KERNEL_IMAGE!"
 
           rm -rf AnyKernel3
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
@@ -187,7 +217,6 @@ jobs:
           sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
           
           zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
-          echo "¡ZIP de AnyKernel3 creado exitosamente!"
 
       - name: Subir Artefacto Compilado a GitHub
         uses: actions/upload-artifact@v4
