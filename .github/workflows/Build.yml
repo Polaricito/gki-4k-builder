@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       DEFCONFIG_NAME:
-        description: 'Nombre del archivo defconfig de tu Samsung'
+        description: 'Nombre o palabra clave del archivo defconfig de tu Samsung'
         required: true
         default: 'defconfig'
 
@@ -19,7 +19,6 @@ jobs:
       - name: Detectar Estructura Dinámica de Fuentes (Evitar errores de rutas)
         id: parse-root
         run: |
-          # Detectamos de forma inteligente si Samsung metió todo dentro de kernel-6.6
           if [ -d "$GITHUB_WORKSPACE/kernel-source/kernel-6.6" ]; then
               echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel-source/kernel-6.6" >> $GITHUB_ENV
               echo "¡Estructura de Samsung detectada! Compilando desde subcarpeta kernel-6.6"
@@ -43,12 +42,10 @@ jobs:
           cd $GITHUB_WORKSPACE
           git config --global url."https://github.com/".insteadOf git@github.com:
           
-          # Clonando la rama oficial correcta de simonpunk
           git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
           cd ${{ env.KERNEL_ROOT }}
           
-          # Copiar archivos de drivers SUSFS a la raíz dinámica del árbol de tu kernel
           if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c" ]; then
               cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
               echo "¡susfs.c inyectado con éxito!"
@@ -59,59 +56,80 @@ jobs:
               echo "¡susfs.h inyectado con éxito!"
           fi
           
-          # Buscar el parche oficial correspondiente dentro del clon para aplicarlo
           PATCH_FILE=$(find $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/ -name "*susfs*.patch" | head -n 1)
           
           if [ -f "$PATCH_FILE" ]; then
               echo "Aplicando parche SUSFS oficial: $PATCH_FILE"
-              git apply --check "$PATCH_FILE" || echo "Aviso: git apply detectó desfases menores, forzando aplicación parcial..."
+              git apply --check "$PATCH_FILE" || echo "Aviso: git apply detectó diferencias menores, procediendo..."
               git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó..."
           else
               echo "Aviso: No se localizó un archivo .patch automatizado, se usará la inyección directa."
           fi
 
-      - name: Configurar Defconfig y Dieta Estricta de Tamaño
+      - name: Auto-Detector de Defconfig y Dieta de Tamaño
         run: |
           cd ${{ env.KERNEL_ROOT }}
-          TARGET_CONFIG="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}"
-          
-          if [ ! -f "$TARGET_CONFIG" ]; then
-              echo "ERROR: El archivo de configuración $TARGET_CONFIG no existe."
-              echo "Archivos disponibles en tus fuentes actuales:"
-              ls arch/arm64/configs/
-              exit 1
+          INPUT_NAME="${{ github.event.inputs.DEFCONFIG_NAME }}"
+          REAL_DEFCONFIG=""
+
+          echo "Iniciando escaneo para el término: $INPUT_NAME"
+
+          # 1. Comprobación de archivo exacto
+          if [ -f "arch/arm64/configs/$INPUT_NAME" ]; then
+              REAL_DEFCONFIG="$INPUT_NAME"
+          # 2. Comprobación automática agregando la extensión común
+          elif [ -f "arch/arm64/configs/${INPUT_NAME}_defconfig" ]; then
+              REAL_DEFCONFIG="${INPUT_NAME}_defconfig"
+          # 3. Búsqueda difusa/parcial en el directorio de configs
+          else
+              MATCH=$(find arch/arm64/configs/ -type f -iname "*${INPUT_NAME}*" | head -n 1)
+              if [ -n "$MATCH" ]; then
+                  REAL_DEFCONFIG=$(basename "$MATCH")
+              else
+                  # Fallback definitivo: Tomar el primer archivo defconfig que exista
+                  ANY_CONFIG=$(find arch/arm64/configs/ -type f -name "*defconfig*" | head -n 1)
+                  if [ -n "$ANY_CONFIG" ]; then
+                      REAL_DEFCONFIG=$(basename "$ANY_CONFIG")
+                  else
+                      echo "ERROR CRÍTICO: No se encontró absolutamente ningún archivo de configuración."
+                      ls -la arch/arm64/configs/
+                      exit 1
+                  fi
+              fi
           fi
 
-          # 1. Asegurar tamaño de página de memoria a 4KB
+          echo "¡Defconfig validado y seleccionado!: $REAL_DEFCONFIG"
+          echo "REAL_DEFCONFIG=$REAL_DEFCONFIG" >> $GITHUB_ENV
+          
+          TARGET_CONFIG="arch/arm64/configs/$REAL_DEFCONFIG"
+
+          # Aplicar parches de tamaño y optimización al archivo detectado
           echo "CONFIG_ARM64_4K_PAGES=y" >> $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
           sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
 
-          # 2. Habilitar banderas oficiales de KernelSU y SUSFS
           echo "CONFIG_KSU=y" >> $TARGET_CONFIG
           echo "CONFIG_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
           echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
 
-          # 3. Eliminar símbolos de depuración para evitar sobrepeso
           sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
           echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
 
-          # 4. Forzar optimización de tamaño binario (-Os)
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
       - name: Compilar Kernel Oficial Samsung
         run: |
           cd ${{ env.KERNEL_ROOT }}
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ github.event.inputs.DEFCONFIG_NAME }}
+          # Usamos la variable detectada dinámicamente por el paso anterior
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
         run: |
           cd $GITHUB_WORKSPACE
           
-          # Buscar la imagen compilada dentro de la ruta raíz dinámica
           KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
           if [ -z "$KERNEL_IMAGE" ]; then
               KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name "Image" | head -n 1)
