@@ -42,7 +42,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           git config --global url."https://github.com/".insteadOf git@github.com:
           
-          # Rama corregida milimétricamente
+          # Clonar la rama GKI oficial para 6.6
           git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
           
           cd ${{ env.KERNEL_ROOT }}
@@ -136,15 +136,73 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
-              echo "Inyectando stubs de mitigación directamente en mm/io_record.c..."
-              {
-                echo "#define register_trace_android_vh_do_read_fault(...) 0"
-                echo "#define unregister_trace_android_vh_do_read_fault(...) 0"
-                echo "#define register_trace_android_vh_filemap_map_pages(...) 0"
-                echo "#define unregister_trace_android_vh_filemap_map_pages(...) 0"
-                echo "#define register_trace_android_vh_filemap_read(...) 0"
-                echo "#define unregister_trace_android_vh_filemap_read(...) 0"
-                echo "#define register_trace_android_rvh_ksys_umount(...) 0"
-                echo "#define unregister_trace_android_rvh_ksys_umount(...) 0"
-              } > mm/io_record.tmp
-              cat mm/io
+              echo "Inyectando stubs de mitigación completos en mm/io_record.c..."
+              
+              # Creamos el bloque de cabecera de forma segura
+              cat << 'EOF' > mm/io_record.headers
+          #define register_trace_android_vh_do_read_fault(...) 0
+          #define unregister_trace_android_vh_do_read_fault(...) 0
+          #define register_trace_android_vh_filemap_map_pages(...) 0
+          #define unregister_trace_android_vh_filemap_map_pages(...) 0
+          #define register_trace_android_vh_filemap_read(...) 0
+          #define unregister_trace_android_vh_filemap_read(...) 0
+          #define register_trace_android_rvh_ksys_umount(...) 0
+          #define unregister_trace_android_rvh_ksys_umount(...) 0
+          EOF
+          
+              # Concatenamos el archivo original detrás de nuestros stubs
+              cat mm/io_record.c >> mm/io_record.headers
+              mv mm/io_record.headers mm/io_record.c
+              echo "¡mm/io_record.c modificado y blindado con éxito!"
+          fi
+
+      - name: Compilar Kernel Oficial Samsung
+        run: |
+          cd ${{ env.KERNEL_ROOT }}
+          
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
+          
+          if [ -f "out/.config" ]; then
+              sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
+              sed -i '/CONFIG_AFDO_OFF/d' out/.config
+              echo "CONFIG_AFDO_OFF=y" >> out/.config
+              
+              sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
+              echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
+              echo "CONFIG_TRACEPOINTS=y" >> out/.config
+              
+              make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          fi
+          
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+
+      - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
+        run: |
+          cd $GITHUB_WORKSPACE
+          
+          KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
+          if [ -z "$KERNEL_IMAGE" ]; then
+              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name "Image" | head -n 1)
+          fi
+
+          if [ -z "$KERNEL_IMAGE" ]; then
+              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
+              exit 1
+          fi
+
+          rm -rf AnyKernel3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cp "$KERNEL_IMAGE" AnyKernel3/Image
+          cd AnyKernel3
+          
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          
+          zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
+
+      - name: Subir Artefacto Compilado a GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel_Samsung_Modificado
+          path: ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
