@@ -114,32 +114,37 @@ jobs:
           sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
           echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
 
-      - name: Desactivar y Forzar Bypass de Perfiles AFDO de Samsung
+      - name: Purga Masiva Global de perfiles AFDO (Toda la Raíz del Servidor)
         run: |
-          cd ${{ env.KERNEL_ROOT }}
+          cd $GITHUB_WORKSPACE
+          echo "Iniciando extirpación quirúrgica de AFDO en cualquier script o Makefile del repositorio..."
           
-          # 1. Eliminar por completo el archivo dummy del sistema para evitar el error de formato corrupto
+          # Asegurarnos de que el runner no tenga rastro del archivo corrupto anterior
           sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
           
-          # 2. Apagar AFDO en la configuración interna del defconfig
-          TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
-          sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
-          echo "CONFIG_AFDO_OFF=y" >> $TARGET_CONFIG
-          
-          # 3. Extirpación quirúrgica global usando grep directo sobre el código fuente
-          echo "Iniciando purga total de flags '-fprofile-sample-use' y '-fprofile-use'..."
-          
-          # Encontrar todos los archivos que tengan referencias y limpiar el flag molesto
-          grep -rl "kernel.afdo" . 2>/dev/null | xargs sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' 2>/dev/null || true
-          grep -rl "fprofile-" . 2>/dev/null | xargs sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' 2>/dev/null || true
-          
-          # Forzar desactivación manual de variables de control AFDO en scripts de compilación
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" \) -exec sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' {} + 2>/dev/null || true
+          # Escaneo absoluto sobre cualquier Makefile, script o Kbuild en todo el espacio de trabajo
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:]]+//g' {} + 2>/dev/null || true
+          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "*.config" -o -name "*.sh" -o -name "Kbuild*" \) -exec sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' {} + 2>/dev/null || true
 
       - name: Compilar Kernel Oficial Samsung
         run: |
           cd ${{ env.KERNEL_ROOT }}
+          
+          # 1. Generar el archivo temporal out/.config inicial
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
+          
+          # 2. INTERCEPCIÓN EN CALIENTE: Forzar el apagado definitivo dentro de out/ antes de que Clang despierte
+          if [ -f "out/.config" ]; then
+              echo "¡Interceptando archivo de compilación out/.config generado!"
+              sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
+              sed -i '/CONFIG_AFDO_OFF/d' out/.config
+              echo "CONFIG_AFDO_OFF=y" >> out/.config
+              
+              # Forzar al sistema a re-organizar las dependencias internas basándose en nuestro cambio manual
+              make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          fi
+          
+          # 3. Lanzar la compilación pesada ahora que el motor de optimización está 100% destruido
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
       - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
