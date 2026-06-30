@@ -136,9 +136,15 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
-              echo "Inyectando stubs de mitigación completos en mm/io_record.c..."
+              echo "Inyectando stubs de mitigación completos y anulando advertencias de desuso..."
               
-              # Creamos el bloque de cabecera de forma segura
+              # 1. Forzar el atributo __maybe_unused para evitar que -Werror detenga el build
+              sed -i 's/static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/g' mm/io_record.c
+              sed -i 's/static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/g' mm/io_record.c
+              sed -i 's/static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/g' mm/io_record.c
+              sed -i 's/static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/g' mm/io_record.c
+          
+              # 2. Creamos el bloque de cabecera de forma segura
               cat << 'EOF' > mm/io_record.headers
           #define register_trace_android_vh_do_read_fault(...) 0
           #define unregister_trace_android_vh_do_read_fault(...) 0
@@ -150,10 +156,10 @@ jobs:
           #define unregister_trace_android_rvh_ksys_umount(...) 0
           EOF
           
-              # Concatenamos el archivo original detrás de nuestros stubs
+              # 3. Concatenamos el archivo original detrás de nuestros stubs
               cat mm/io_record.c >> mm/io_record.headers
               mv mm/io_record.headers mm/io_record.c
-              echo "¡mm/io_record.c modificado y blindado con éxito!"
+              echo "¡mm/io_record.c modificado, blindado y protegido contra -Wunused-function!"
           fi
 
       - name: Compilar Kernel Oficial Samsung
