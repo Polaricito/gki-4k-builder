@@ -168,15 +168,15 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           if [ -f "fs/fuse/inode.c" ]; then
-              echo "Inyectando stub de símbolo débil para fslog_stlog en FUSE..."
+              echo "Inyectando stub de símbolo débil corregido (int) para fslog_stlog en FUSE..."
               cat << 'EOF' >> fs/fuse/inode.c
 
           /* Parche de mitigación para bypass de telemetría faltante de Samsung */
-          void __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
-              /* Stub vacío para satisfacer al enlazador */
+          int __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
+              return 0;
           }
           EOF
-              echo "¡Símbolo de emergencia fslog_stlog inyectado correctamente!"
+              echo "¡Símbolo de emergencia fslog_stlog (int) inyectado correctamente!"
           fi
 
       - name: Compilar Kernel Oficial Samsung
