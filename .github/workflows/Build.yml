@@ -37,13 +37,13 @@ jobs:
               git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
 
-       - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
-         run: |
-           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
-           if [ -f "mm/io_record.c" ]; then
+      - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          if [ -f "mm/io_record.c" ]; then
               echo "Inyectando stubs de mitigación robustos al INICIO de mm/io_record.c..."
               
-              # Prevenir errores de -Werror,-Wunused-function
+              # Prevenir errores de -Werror,-Wunused-function marcando funciones inactivas como permitidas
               sed -i 's/^static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/' mm/io_record.c
               sed -i 's/^static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/' mm/io_record.c
               sed -i 's/^static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/' mm/io_record.c
@@ -63,10 +63,12 @@ jobs:
               # Concatenamos el contenido original abajo de nuestros stubs blindados
               cat mm/io_record.c >> mm/io_record.tmp
               
-              # Reemplazamos el archivo original
+              # Reemplazamos el archivo original con el nuevo orden
               mv mm/io_record.tmp mm/io_record.c
-              echo "¡Modificaciones avanzadas en mm/io_record.c completadas!"
-           fi
+              echo "¡Modificaciones avanzadas en mm/io_record.c completadas con éxito!"
+          else
+              echo "Aviso: mm/io_record.c no encontrado en esta ruta."
+          fi
           
       - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
         run: |
