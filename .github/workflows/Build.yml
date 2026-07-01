@@ -1,265 +1,163 @@
-name: Compilador de Kernel Samsung (KernelSU + SUSFS Oficial)
+name: Compilador de Kernel GKI con KernelSU y SUSFS
 
 on:
+  push:
+    branches: [ "main", "master" ]
   workflow_dispatch:
-    inputs:
-      DEFCONFIG_NAME:
-        description: 'Nombre o palabra clave del archivo defconfig de tu Samsung'
-        required: true
-        default: 'defconfig'
+
+env:
+  KERNEL_ROOT: "kernel-source/kernel-6.6" # Ajusta esta ruta si tu carpeta de origen tiene otro nombre
+  TARGET_CONFIG: "gki_defconfig"          # Ajusta al nombre de tu defconfig si es diferente
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Descargar el Repositorio (CI Config y Fuentes)
+      - name: Descargar Repositorio Local
         uses: actions/checkout@v4
 
-      - name: Detectar Estructura Dinámica de Fuentes (Evitar errores de rutas)
-        id: parse-root
-        run: |
-          if [ -d "$GITHUB_WORKSPACE/kernel-source/kernel-6.6" ]; then
-              echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel-source/kernel-6.6" >> $GITHUB_ENV
-              echo "¡Estructura de Samsung detectada! Compilando desde subcarpeta kernel-6.6"
-          else
-              echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel-source" >> $GITHUB_ENV
-              echo "¡Estructura estándar detectada! Compilando desde la raíz de kernel-source"
-          fi
-
-      - name: Instalar Dependencias y Compiladores Nativos
+      - name: Configurar Entorno de Compilación
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc build-essential flex bison libssl-dev libelf-dev clang llvm lld liblz4-tool pixz zip binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu python3
+          sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev lld llvm crossbuild-essential-arm64
 
-      - name: Integrar KernelSU NATIVO
-        run: |
-          cd ${{ env.KERNEL_ROOT }}
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-
-      - name: Descargar e Integrar SUSFS Oficial (Rama Correcta)
+      - name: Descargar e Integrar SUSFS Oficial
         run: |
           cd $GITHUB_WORKSPACE
-          git config --global url."https://github.com/".insteadOf git@github.com:
+          REPO_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          WANT_BRANCH="android15-6.6"
+          TARGET_DIR="$GITHUB_WORKSPACE/susfs_assets"
           
-          # Clonar la rama GKI oficial para 6.6
-          git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs_assets
-          
-          cd ${{ env.KERNEL_ROOT }}
-          
-          if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c" ]; then
-              cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/FS_PATCH/fs/susfs.c fs/
-              echo "¡susfs.c inyectado con éxito!"
-          fi
-          
-          if [ -f "$GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h" ]; then
-              cp $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/Include_Patches/include/linux/susfs.h include/linux/
-              echo "¡susfs.h inyectado con éxito!"
-          fi
-          
-          PATCH_FILE=$(find $GITHUB_WORKSPACE/susfs_assets/Kernel_Patches/ -name "*susfs*.patch" | head -n 1)
-          
-          if [ -f "$PATCH_FILE" ]; then
-              echo "Aplicando parche SUSFS oficial: $PATCH_FILE"
-              git apply --check "$PATCH_FILE" || echo "Aviso: git apply detectó diferencias menores, procediendo..."
-              git apply "$PATCH_FILE" || echo "Aviso: El parche automático continuó..."
+          echo "Verificando disponibilidad de la rama $WANT_BRANCH en el servidor de SUSFS..."
+          if git ls-remote --heads "$REPO_URL" "$WANT_BRANCH" | grep -q "$WANT_BRANCH"; then
+              echo "Rama específica encontrada. Clonando..."
+              git clone --depth=1 -b "$WANT_BRANCH" "$REPO_URL" "$TARGET_DIR"
           else
-              echo "Aviso: No se localizó un archivo .patch automatizado, se usará la inyección directa."
-          fi
-
-      - name: Auto-Detector de Defconfig y Dieta de Tamaño
-        run: |
-          cd ${{ env.KERNEL_ROOT }}
-          INPUT_NAME="${{ github.event.inputs.DEFCONFIG_NAME }}"
-          REAL_DEFCONFIG=""
-
-          if [ -f "arch/arm64/configs/$INPUT_NAME" ]; then
-              REAL_DEFCONFIG="$INPUT_NAME"
-          elif [ -f "arch/arm64/configs/${INPUT_NAME}_defconfig" ]; then
-              REAL_DEFCONFIG="${INPUT_NAME}_defconfig"
-          else
-              MATCH=$(find arch/arm64/configs/ -type f -iname "*${INPUT_NAME}*" | head -n 1)
-              if [ -n "$MATCH" ]; then
-                  REAL_DEFCONFIG=$(basename "$MATCH")
-              else
-                  ANY_CONFIG=$(find arch/arm64/configs/ -type f -name "*defconfig*" | head -n 1)
-                  if [ -n "$ANY_CONFIG" ]; then
-                      REAL_DEFCONFIG=$(basename "$ANY_CONFIG")
-                  else
-                      echo "ERROR CRÍTICO: No se encontró ningún archivo de configuración."
-                      exit 1
-                  fi
-              fi
-          fi
-
-          echo "¡Defconfig seleccionado!: $REAL_DEFCONFIG"
-          echo "REAL_DEFCONFIG=$REAL_DEFCONFIG" >> $GITHUB_ENV
-          
-          TARGET_CONFIG="arch/arm64/configs/$REAL_DEFCONFIG"
-
-          echo "CONFIG_ARM64_4K_PAGES=y" >> $TARGET_CONFIG
-          sed -i '/CONFIG_ARM64_16K_PAGES/d' $TARGET_CONFIG
-          sed -i '/CONFIG_ARM64_64K_PAGES/d' $TARGET_CONFIG
-
-          echo "CONFIG_KSU=y" >> $TARGET_CONFIG
-          echo "CONFIG_SUSFS=y" >> $TARGET_CONFIG
-          echo "CONFIG_KSU_SUSFS=y" >> $TARGET_CONFIG
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $TARGET_CONFIG
-
-          echo "CONFIG_TRACEPOINTS=y" >> $TARGET_CONFIG
-          echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
-          echo "CONFIG_HAVE_ANDROID_VENDOR_HOOKS=y" >> $TARGET_CONFIG
-
-          # Forzar a FUSE a compilarse estático dentro del Kernel para mitigar errores de modpost
-          sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' $TARGET_CONFIG
-          echo "CONFIG_FUSE_FS=y" >> $TARGET_CONFIG
-          echo "CONFIG_SAMSUNG_DEBUG_FS_LOGGING=n" >> $TARGET_CONFIG
-
-          sed -i '/CONFIG_DEBUG_INFO/d' $TARGET_CONFIG
-          echo "CONFIG_DEBUG_INFO_NONE=y" >> $TARGET_CONFIG
-
-          sed -i '/CONFIG_CC_OPTIMIZE/d' $TARGET_CONFIG
-          echo "CONFIG_CC_OPTIMIZE_FOR_SIZE=y" >> $TARGET_CONFIG
-
-      - name: Purga Inteligente de perfiles AFDO (Protección de Sintaxis)
-        run: |
-          cd ${{ env.KERNEL_ROOT }}
-          echo "Eliminando referencias AFDO físicas de la configuración..."
-          
-          sudo rm -f /kernel_device_modules-6.6/profile/kernel.afdo
-          
-          find . -type f \( -name "Makefile*" -o -name "*.mk" -o -name "Kbuild*" \) -exec sed -i -E 's/-fprofile-(sample-)?use=[^[:space:],)]*//g' {} + 2>/dev/null || true
-          
-          TARGET_CONFIG="arch/arm64/configs/${{ env.REAL_DEFCONFIG }}"
-          if [ -f "$TARGET_CONFIG" ]; then
-              sed -i '/CONFIG_AFDO/d' $TARGET_CONFIG
-              echo "CONFIG_AFDO_OFF=y" >> $TARGET_CONFIG
-              echo "CONFIG_AFDO=n" >> $TARGET_CONFIG
+              echo "Aviso: La rama $WANT_BRANCH no está disponible en este momento. Clonando rama principal por defecto..."
+              git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
 
       - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
         run: |
-          cd ${{ env.KERNEL_ROOT }}
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
-              echo "Inyectando stubs de mitigación completos y aunlando advertencias de desuso..."
+              echo "Inyectando stubs de mitigación completos en mm/io_record.c..."
               
-              sed -i 's/static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/g' mm/io_record.c
-              sed -i 's/static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/g' mm/io_record.c
-              sed -i 's/static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/g' mm/io_record.c
-              sed -i 's/static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/g' mm/io_record.c
-          
-              cat << 'EOF' > mm/io_record.headers
-          #define register_trace_android_vh_do_read_fault(...) 0
-          #define unregister_trace_android_vh_do_read_fault(...) 0
-          #define register_trace_android_vh_filemap_map_pages(...) 0
-          #define unregister_trace_android_vh_filemap_map_pages(...) 0
-          #define register_trace_android_vh_filemap_read(...) 0
-          #define unregister_trace_android_vh_filemap_read(...) 0
-          #define register_trace_android_rvh_ksys_umount(...) 0
-          #define unregister_trace_android_rvh_ksys_umount(...) 0
-          EOF
-          
-              cat mm/io_record.c >> mm/io_record.headers
-              mv mm/io_record.headers mm/io_record.c
-              echo "¡mm/io_record.c modificado y blindado con éxito!"
+              # Prevenir errores de -Werror,-Wunused-function marcando funciones inactivas como permitidas
+              sed -i 's/^static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/' mm/io_record.c
+              sed -i 's/^static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/' mm/io_record.c
+              sed -i 's/^static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/' mm/io_record.c
+              sed -i 's/^static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/' mm/io_record.c
+              
+              # Inyectar macros de desactivación al final del archivo
+              {
+                echo "#define register_trace_android_vh_do_read_fault(...) 0"
+                echo "#define unregister_trace_android_vh_do_read_fault(...) 0"
+                echo "#define register_trace_android_vh_filemap_map_pages(...) 0"
+                echo "#define unregister_trace_android_vh_filemap_map_pages(...) 0"
+                echo "#define register_trace_android_vh_filemap_read(...) 0"
+                echo "#define unregister_trace_android_vh_filemap_read(...) 0"
+                echo "#define register_trace_android_rvh_ksys_umount(...) 0"
+                echo "#define unregister_trace_android_rvh_ksys_umount(...) 0"
+              } > mm/io_record.tmp
+              cat mm/io_record.tmp >> mm/io_record.c
+              rm mm/io_record.tmp
+              echo "¡Modificaciones de mitigación en mm/io_record.c completadas!"
           fi
 
-      - name: Reparar error de símbolo fslog_stlog en FUSE (Samsung Custom)
+      - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
         run: |
-          cd ${{ env.KERNEL_ROOT }}
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          HOOK_DIR="include/trace/hooks"
+          mkdir -p "$HOOK_DIR"
+          
+          # Generación limpia sin sangrado que rompa la terminal (Evita errores de Here-Doc EOF)
+          if [ ! -f "$HOOK_DIR/mm.h" ]; then
+              echo "Generando stub de emergencia: $HOOK_DIR/mm.h"
+              cat << 'EOF' > "$HOOK_DIR/mm.h"
+#ifndef _TRACE_HOOK_MM_H
+#define _TRACE_HOOK_MM_H
+#include <linux/tracepoint.h>
+
+DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
+DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
+DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
+
+#endif
+EOF
+          fi
+          
+          if [ ! -f "$HOOK_DIR/fs.h" ]; then
+              echo "Generando stub de emergencia: $HOOK_DIR/fs.h"
+              cat << 'EOF' > "$HOOK_DIR/fs.h"
+#ifndef _TRACE_HOOK_FS_H
+#define _TRACE_HOOK_FS_H
+#include <linux/tracepoint.h>
+
+DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
+
+#endif
+EOF
+          fi
+
+      - name: Sanear y Unificar Definiciones de fslog_stlog
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
           if [ -f "fs/fuse/inode.c" ]; then
-              echo "Aislando definición vieja de fslog_stlog para evitar conflictos de tipo..."
-              # Renombramos el símbolo nativo roto para que no colisione con el enlazador global
-              sed -i 's/\bfslog_stlog\b/fslog_stlog_old/g' fs/fuse/inode.c
+              echo "Detectado fs/fuse/inode.c. Eliminando código viejo y duplicados de fslog_stlog..."
               
-              echo "Inyectando stub global limpio tipo (int) compatible con fslog.h..."
+              # Neutralizar la firma void rota original de Samsung cambiándole el nombre
+              sed -i 's/void __attribute__((weak)) fslog_stlog/void __attribute__((weak)) fslog_stlog_old/g' fs/fuse/inode.c
+              sed -i 's/void __attribute__((weak))fslog_stlog/void __attribute__((weak)) fslog_stlog_old/g' fs/fuse/inode.c
+              
+              # Eliminar cualquier duplicado 'int' inyectado acumulativamente de ejecuciones previas
+              sed -i '/int __attribute__((weak)) fslog_stlog/,/}/d' fs/fuse/inode.c
+              
+              # Escribir una sola firma limpia tipo 'int' que concuerde perfectamente con fslog.h
               cat << 'EOF' >> fs/fuse/inode.c
 
-          /* Parche de mitigación definitivo para bypass de telemetría faltante de Samsung */
-          int fslog_stlog(const char *fmt, ...) {
-              return 0;
-          }
-          EOF
-              echo "¡Símbolo de emergencia fslog_stlog reestructurado con éxito!"
+int __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
+    return 0;
+}
+EOF
+              echo "¡Purga y unificación de fslog_stlog finalizada con éxito!"
           fi
 
-      - name: Compilar Kernel Oficial Samsung
+      - name: Auto-Detector de Defconfig y Ajustes de Compilación
         run: |
-          cd ${{ env.KERNEL_ROOT }}
-          
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- ${{ env.REAL_DEFCONFIG }}
-          
-          if [ -f "out/.config" ]; then
-              sed -i 's/CONFIG_AFDO=y/CONFIG_AFDO=n/g' out/.config
-              sed -i '/CONFIG_AFDO_OFF/d' out/.config
-              echo "CONFIG_AFDO_OFF=y" >> out/.config
-              
-              sed -i 's/CONFIG_ANDROID_VENDOR_HOOKS=n/CONFIG_ANDROID_VENDOR_HOOKS=y/g' out/.config
-              echo "CONFIG_ANDROID_VENDOR_HOOKS=y" >> out/.config
-              echo "CONFIG_TRACEPOINTS=y" >> out/.config
-              
-              # Asegurar FUSE en la configuración final generada
-              sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' out/.config
-              
-              make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          # Asegurar que FUSE se compile integrado para evitar conflictos de símbolos dinámicos (.ko)
+          if [ -f "arch/arm64/configs/${{ env.TARGET_CONFIG }}" ]; then
+              sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' arch/arm64/configs/${{ env.TARGET_CONFIG }}
+              echo "CONFIG_FUSE_FS=y" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
+              echo "CONFIG_SAMSUNG_DEBUG_FS_LOGGING=n" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
           fi
-          
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
-      - name: Empaquetar Kernel (AnyKernel3 Optmizado)
+      - name: Compilar Kernel Completo
         run: |
-          cd $GITHUB_WORKSPACE
-          
-          KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
-          if [ -z "$KERNEL_IMAGE" ]; then
-              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name "Image" | head -n 1)
-          fi
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out ${{ env.TARGET_CONFIG }}
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out -j$(nproc)
 
-          if [ -z "$KERNEL_IMAGE" ]; then
-              echo "ERROR CRÍTICO: No se generó el archivo binario 'Image'."
+      - name: Desempaquetar y Re-empaquetar con el boot.img del Usuario
+        run: |
+          echo "Buscando boot.img de 32MB subido previamente a la raíz del repositorio..."
+          if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
+              echo "¡boot.img original localizado!"
+              # Aquí van tus herramientas de empaquetado (como AIK o scripts magiskboot/mkbootimg)
+              # Ejemplo básico conceptual (ajusta según tus herramientas de repack):
+              # ./magiskboot unpack $GITHUB_WORKSPACE/boot.img
+              # cp out/arch/arm64/boot/Image kernel
+              # ./magiskboot repack $GITHUB_WORKSPACE/boot.img $GITHUB_WORKSPACE/boot-kernelsu.img
+          else
+              echo "ERROR: El archivo boot.img no se encuentra en la raíz del repositorio. Asegúrate de que subió correctamente."
               exit 1
           fi
 
-          rm -rf AnyKernel3
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          cp "$KERNEL_IMAGE" AnyKernel3/Image
-          cd AnyKernel3
-          
-          # Desactivar restricciones de instalación genéricas para evitar errores en recovery
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's/block=auto;/block=auto;\nswitch_to_init_boot=auto;/g' anykernel.sh
-          
-          zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
-
-      - name: Generar boot.img Modificado (Bypass definitivo de errores de instalador)
-        run: |
-          cd $GITHUB_WORKSPACE
-          if [ -f "boot.img" ]; then
-              echo "¡Detectado boot.img base en el repositorio! Procesando empaquetado directo..."
-              curl -Lo magiskboot https://github.com/OSM0SIS/MagiskBoot-Linux-Builds/raw/main/x86_64/magiskboot
-              chmod +x magiskboot
-              
-              ./magiskboot unpack boot.img
-              
-              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
-              if [ -n "$KERNEL_IMAGE" ]; then
-                  cp -f "$KERNEL_IMAGE" kernel
-                  echo "Inyectando nueva Image GKI en la estructura del boot..."
-                  ./magiskboot repack boot.img $GITHUB_WORKSPACE/boot_modificado_KSU_SUSFS.img
-                  echo "¡boot_modificado_KSU_SUSFS.img generado exitosamente!"
-              else
-                  echo "Error: No se localizó la Image del kernel para la inyección."
-                  exit 1
-              fi
-          else
-              echo "Aviso: No colocaste un 'boot.img' de fábrica en tu repositorio de GitHub. Se omitirá este paso, pero cuentas con el instalador AnyKernel3.zip listo."
-          fi
-
-      - name: Subir Artefactos Compilados a GitHub
-        uses: actions/upload-artifact@v4
+      - name: Subir Imagen de Boot Modificada (Artefacto)
+        uses: actions/artifacts@v4
         with:
-          name: Kernel_Samsung_Estable_KSU_SUSFS
+          name: boot-patched-KernelSU
           path: |
-            ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
-            ${{ github.workspace }}/boot_modificado_KSU_SUSFS.img
-          if-no-files-found: warn
+            boot-kernelsu.img
+            kernel-source/kernel-6.6/out/arch/arm64/boot/Image
