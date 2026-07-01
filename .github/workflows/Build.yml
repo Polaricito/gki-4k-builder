@@ -39,8 +39,8 @@ jobs:
 
        - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
          run: |
-          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
-          if [ -f "mm/io_record.c" ]; then
+           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+           if [ -f "mm/io_record.c" ]; then
               echo "Inyectando stubs de mitigación robustos al INICIO de mm/io_record.c..."
               
               # Prevenir errores de -Werror,-Wunused-function
@@ -66,9 +66,8 @@ jobs:
               # Reemplazamos el archivo original
               mv mm/io_record.tmp mm/io_record.c
               echo "¡Modificaciones avanzadas en mm/io_record.c completadas!"
-          fi
-
-
+           fi
+          
       - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
