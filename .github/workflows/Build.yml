@@ -37,8 +37,8 @@ jobs:
               git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
 
-            - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
-        run: |
+       - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
+         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
               echo "Inyectando stubs de mitigación robustos al INICIO de mm/io_record.c..."
