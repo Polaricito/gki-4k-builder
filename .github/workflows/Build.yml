@@ -138,14 +138,49 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out ${{ env.TARGET_CONFIG }}
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out -j$(nproc)
 
-      - name: Desempaquetar y Re-empaquetar con el boot.img del Usuario
+      - name: Desempaquetar y Re-empaquetar Boot Image para Odin/Fastboot
         run: |
-          echo "Buscando boot.img de 32MB subido previamente a la raíz del repositorio..."
+          echo "Buscando boot.img original subido a la raíz..."
           if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
               echo "¡boot.img original localizado!"
-              # Tus comandos de desempaquetado/re-empaquetado irían aquí.
+              cp "$GITHUB_WORKSPACE/boot.img" .
+              
+              echo "Descargando magiskboot nativo para Linux x86_64..."
+              curl -Lo magiskboot https://github.com/Uevo001/magiskboot-linux/raw/main/x86_64/magiskboot
+              chmod +x magiskboot
+              
+              echo "Desempaquetando boot.img de stock..."
+              ./magiskboot unpack boot.img
+              
+              echo "Buscando el archivo kernel (Image) recién compilado..."
+              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name Image -type f | head -n 1)
+              if [ -z "$KERNEL_IMAGE" ]; then
+                  echo "ERROR: No se encontró el archivo Image compilado."
+                  exit 1
+              fi
+              echo "Kernel encontrado en: $KERNEL_IMAGE"
+              
+              echo "Reemplazando el kernel original por el nuevo..."
+              cp -f "$KERNEL_IMAGE" kernel
+              
+              echo "Re-empaquetando el boot.img..."
+              ./magiskboot repack boot.img new-boot.img
+              
+              if [ -f "new-boot.img" ]; then
+                  echo "¡boot.img con KernelSU y SUSFS creado con éxito!"
+                  mkdir -p $GITHUB_WORKSPACE/output
+                  cp new-boot.img $GITHUB_WORKSPACE/output/boot.img
+                  
+                  echo "Creando archivo .tar para flashear directamente por Odin..."
+                  cd $GITHUB_WORKSPACE/output
+                  tar -cvf boot.tar boot.img
+                  echo "¡boot.tar creado con éxito!"
+              else
+                  echo "ERROR: Falló el re-empaquetado con magiskboot."
+                  exit 1
+              fi
           else
-              echo "ERROR: El archivo boot.img no se encuentra en la raíz del repositorio."
+              echo "ERROR: Por favor sube tu boot.img original a la raíz de tu repositorio con el nombre exacto 'boot.img'."
               exit 1
           fi
 
