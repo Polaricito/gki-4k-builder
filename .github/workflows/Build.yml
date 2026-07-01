@@ -94,6 +94,16 @@ jobs:
                 '#endif' > "$HOOK_DIR/fs.h"
           fi
 
+      - name: Parchear drivers/hid/hid-samsung.c (Código Inalcanzable set_bit)
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          if [ -f "drivers/hid/hid-samsung.c" ]; then
+              echo "Corrigiendo posiciones de set_bit en switch blocks dentro de hid-samsung.c..."
+              # Busca el patrón switch con set_bit interno e invierte de forma segura su orden jerárquico
+              perl -0777 -pi -e 's/switch\s*\(usage->hid\s*&\s*HID_USAGE\)\s*\{\s*set_bit\s*\(\s*EV_REP\s*,\s*hi->input->evbit\s*\);/set_bit(EV_REP, hi->input->evbit);\n\tswitch (usage->hid \& HID_USAGE) {/g' drivers/hid/hid-samsung.c
+              echo "¡Parche de drivers/hid/hid-samsung.c aplicado con éxito!"
+          fi
+
       - name: Sanear y Unificar Definiciones de fslog_stlog
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
