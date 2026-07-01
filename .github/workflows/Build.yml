@@ -33,7 +33,7 @@ jobs:
               echo "Rama específica encontrada. Clonando..."
               git clone --depth=1 -b "$WANT_BRANCH" "$REPO_URL" "$TARGET_DIR"
           else
-              echo "Aviso: La rama $WANT_BRANCH no está disponible en este momento. Clonando rama principal por defecto..."
+              echo "Aviso: La rama $WANT_BRANCH no está disponible. Clonando rama principal..."
               git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
 
@@ -49,19 +49,16 @@ jobs:
               sed -i 's/^static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/' mm/io_record.c
               sed -i 's/^static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/' mm/io_record.c
               
-              # Inyectar macros de desactivación al final del archivo
-              {
-                echo "#define register_trace_android_vh_do_read_fault(...) 0"
-                echo "#define unregister_trace_android_vh_do_read_fault(...) 0"
-                echo "#define register_trace_android_vh_filemap_map_pages(...) 0"
-                echo "#define unregister_trace_android_vh_filemap_map_pages(...) 0"
-                echo "#define register_trace_android_vh_filemap_read(...) 0"
-                echo "#define unregister_trace_android_vh_filemap_read(...) 0"
-                echo "#define register_trace_android_rvh_ksys_umount(...) 0"
-                echo "#define unregister_trace_android_rvh_ksys_umount(...) 0"
-              } > mm/io_record.tmp
-              cat mm/io_record.tmp >> mm/io_record.c
-              rm mm/io_record.tmp
+              # Inyección limpia usando printf lineal sin romper YAML
+              printf '%s\n' \
+                '#define register_trace_android_vh_do_read_fault(...) 0' \
+                '#define unregister_trace_android_vh_do_read_fault(...) 0' \
+                '#define register_trace_android_vh_filemap_map_pages(...) 0' \
+                '#define unregister_trace_android_vh_filemap_map_pages(...) 0' \
+                '#define register_trace_android_vh_filemap_read(...) 0' \
+                '#define unregister_trace_android_vh_filemap_read(...) 0' \
+                '#define register_trace_android_rvh_ksys_umount(...) 0' \
+                '#define unregister_trace_android_rvh_ksys_umount(...) 0' >> mm/io_record.c
               echo "¡Modificaciones de mitigación en mm/io_record.c completadas!"
           fi
 
@@ -71,33 +68,30 @@ jobs:
           HOOK_DIR="include/trace/hooks"
           mkdir -p "$HOOK_DIR"
           
-          # Generación limpia sin sangrado que rompa la terminal (Evita errores de Here-Doc EOF)
           if [ ! -f "$HOOK_DIR/mm.h" ]; then
-              echo "Generando stub de emergencia: $HOOK_DIR/mm.h"
-              cat << 'EOF' > "$HOOK_DIR/mm.h"
-#ifndef _TRACE_HOOK_MM_H
-#define _TRACE_HOOK_MM_H
-#include <linux/tracepoint.h>
-
-DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));
-DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));
-DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));
-
-#endif
-EOF
+              echo "Generando stub de emergencia seguro: $HOOK_DIR/mm.h"
+              printf '%s\n' \
+                '#ifndef _TRACE_HOOK_MM_H' \
+                '#define _TRACE_HOOK_MM_H' \
+                '#include <linux/tracepoint.h>' \
+                '' \
+                'DECLARE_TRACE(android_vh_do_read_fault, TP_PROTO(void *data, struct vm_fault *vmf, unsigned long fault_around_pages), TP_ARGS(data, vmf, fault_around_pages));' \
+                'DECLARE_TRACE(android_vh_filemap_map_pages, TP_PROTO(void *data, struct file *file, pgoff_t first_pgoff, pgoff_t last_pgoff, vm_fault_t ret), TP_ARGS(data, file, first_pgoff, last_pgoff, ret));' \
+                'DECLARE_TRACE(android_vh_filemap_read, TP_PROTO(void *data, struct file *file, loff_t pos, size_t size), TP_ARGS(data, file, pos, size));' \
+                '' \
+                '#endif' > "$HOOK_DIR/mm.h"
           fi
           
           if [ ! -f "$HOOK_DIR/fs.h" ]; then
-              echo "Generando stub de emergencia: $HOOK_DIR/fs.h"
-              cat << 'EOF' > "$HOOK_DIR/fs.h"
-#ifndef _TRACE_HOOK_FS_H
-#define _TRACE_HOOK_FS_H
-#include <linux/tracepoint.h>
-
-DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));
-
-#endif
-EOF
+              echo "Generando stub de emergencia seguro: $HOOK_DIR/fs.h"
+              printf '%s\n' \
+                '#ifndef _TRACE_HOOK_FS_H' \
+                '#define _TRACE_HOOK_FS_H' \
+                '#include <linux/tracepoint.h>' \
+                '' \
+                'DECLARE_TRACE(android_rvh_ksys_umount, TP_PROTO(void *data, char __user *name, int flags), TP_ARGS(data, name, flags));' \
+                '' \
+                '#endif' > "$HOOK_DIR/fs.h"
           fi
 
       - name: Sanear y Unificar Definiciones de fslog_stlog
@@ -110,16 +104,11 @@ EOF
               sed -i 's/void __attribute__((weak)) fslog_stlog/void __attribute__((weak)) fslog_stlog_old/g' fs/fuse/inode.c
               sed -i 's/void __attribute__((weak))fslog_stlog/void __attribute__((weak)) fslog_stlog_old/g' fs/fuse/inode.c
               
-              # Eliminar cualquier duplicado 'int' inyectado acumulativamente de ejecuciones previas
+              # Eliminar cualquier duplicado 'int' inyectado de ejecuciones previas
               sed -i '/int __attribute__((weak)) fslog_stlog/,/}/d' fs/fuse/inode.c
               
-              # Escribir una sola firma limpia tipo 'int' que concuerde perfectamente con fslog.h
-              cat << 'EOF' >> fs/fuse/inode.c
-
-int __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
-    return 0;
-}
-EOF
+              # Inyectar de manera segura usando saltos de línea controlados por printf
+              printf '\nint __attribute__((weak)) fslog_stlog(const char *fmt, ...) {\n    return 0;\n}\n' >> fs/fuse/inode.c
               echo "¡Purga y unificación de fslog_stlog finalizada con éxito!"
           fi
 
@@ -144,18 +133,14 @@ EOF
           echo "Buscando boot.img de 32MB subido previamente a la raíz del repositorio..."
           if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
               echo "¡boot.img original localizado!"
-              # Aquí van tus herramientas de empaquetado (como AIK o scripts magiskboot/mkbootimg)
-              # Ejemplo básico conceptual (ajusta según tus herramientas de repack):
-              # ./magiskboot unpack $GITHUB_WORKSPACE/boot.img
-              # cp out/arch/arm64/boot/Image kernel
-              # ./magiskboot repack $GITHUB_WORKSPACE/boot.img $GITHUB_WORKSPACE/boot-kernelsu.img
+              # Tus comandos de desempaquetado/re-empaquetado irían aquí.
           else
-              echo "ERROR: El archivo boot.img no se encuentra en la raíz del repositorio. Asegúrate de que subió correctamente."
+              echo "ERROR: El archivo boot.img no se encuentra en la raíz del repositorio."
               exit 1
           fi
 
       - name: Subir Imagen de Boot Modificada (Artefacto)
-        uses: actions/artifacts@v4
+        uses: actions/upload-artifact@v4
         with:
           name: boot-patched-KernelSU
           path: |
