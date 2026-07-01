@@ -1,35 +1,41 @@
-name: Compilar Kernel GKI con KernelSU y SUSFS
+
+name: Compilador de Kernel GKI con KernelSU y SUSFS
 
 on:
-  workflow_dispatch: # Permite lanzar la compilación manualmente desde GitHub
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 env:
-  KERNEL_ROOT: "kernel-source/kernel-6.6" # Ajusta esto a tu ruta si es diferente
-  TARGET_CONFIG: "defconfig" # Tu defconfig objetivo
+  KERNEL_ROOT: "kernel-source/kernel-6.6" # Ajusta esta ruta si tu carpeta de origen tiene otro nombre
+  TARGET_CONFIG: "defconfig" # Ajusta al nombre de tu defconfig si es diferente
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Descargar Código Fuente (Checkout)
+      - name: Descargar Repositorio Local
         uses: actions/checkout@v4
 
-      - name: Configurar Entorno de Compilación Linux
+      - name: Configurar Entorno de Compilación
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential flex gap g++-multilib gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc-multilib binutils-aarch64-linux-gnu git gnupg gperf lib32readline-dev lib32z1-dev liblzma-dev libncurses5-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev libelf-dev
-
-      - name: Auto-Detector de Defconfig y Dieta de Tamaño
+          sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev lld llvm crossbuild-essential-arm64
+      - name: Descargar e Integrar SUSFS Oficial
         run: |
-          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
-          # Asegurar que FUSE se compile integrado para evitar conflictos de símbolos dinámicos (.ko)
-          if [ -f "arch/arm64/configs/${{ env.TARGET_CONFIG }}" ]; then
-              sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' arch/arm64/configs/${{ env.TARGET_CONFIG }}
-              echo "CONFIG_FUSE_FS=y" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
-              echo "CONFIG_SAMSUNG_DEBUG_FS_LOGGING=n" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
+          cd $GITHUB_WORKSPACE
+          REPO_URL="https://gitlab.com/simonpunk/susfs4ksu.git"
+          WANT_BRANCH="android15-6.6"
+          TARGET_DIR="$GITHUB_WORKSPACE/susfs_assets"
+          
+          echo "Verificando disponibilidad de la rama $WANT_BRANCH en el servidor de SUSFS..."
+          if git ls-remote --heads "$REPO_URL" "$WANT_BRANCH" | grep -q "$WANT_BRANCH"; then
+              echo "Rama específica encontrada. Clonando..."
+              git clone --depth=1 -b "$WANT_BRANCH" "$REPO_URL" "$TARGET_DIR"
+          else
+              echo "Aviso: La rama $WANT_BRANCH no está disponible. Clonando rama principal..."
+              git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
-          echo "Aplicando configuraciones al defconfig..."
-
       - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
@@ -62,7 +68,7 @@ jobs:
           else
               echo "Aviso: mm/io_record.c no encontrado en esta ruta."
           fi
-
+          
       - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
@@ -94,7 +100,6 @@ jobs:
                 '' \
                 '#endif' > "$HOOK_DIR/fs.h"
           fi
-
       - name: Parchear drivers/hid/hid-samsung.c (Código Inalcanzable set_bit)
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
@@ -104,7 +109,6 @@ jobs:
               perl -0777 -pi -e 's/switch\s*\(usage->hid\s*&\s*HID_USAGE\)\s*\{\s*set_bit\s*\(\s*EV_REP\s*,\s*hi->input->evbit\s*\);/set_bit(EV_REP, hi->input->evbit);\n\tswitch (usage->hid \& HID_USAGE) {/g' drivers/hid/hid-samsung.c
               echo "¡Parche de drivers/hid/hid-samsung.c aplicado con éxito!"
           fi
-
       - name: Sanear y Unificar Definiciones de fslog_stlog
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
@@ -122,24 +126,31 @@ jobs:
               printf '\nint __attribute__((weak)) fslog_stlog(const char *fmt, ...) {\n    return 0;\n}\n' >> fs/fuse/inode.c
               echo "¡Purga y unificación de fslog_stlog finalizada con éxito!"
           fi
-      - name: Ejecutar Compilación del Kernel
+      - name: Auto-Detector de Defconfig y Ajustes de Compilación
+        run: |
+          cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
+          # Asegurar que FUSE se compile integrado para evitar conflictos de símbolos dinámicos (.ko)
+          if [ -f "arch/arm64/configs/${{ env.TARGET_CONFIG }}" ]; then
+              sed -i 's/CONFIG_FUSE_FS=m/CONFIG_FUSE_FS=y/g' arch/arm64/configs/${{ env.TARGET_CONFIG }}
+              echo "CONFIG_FUSE_FS=y" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
+              echo "CONFIG_SAMSUNG_DEBUG_FS_LOGGING=n" >> arch/arm64/configs/${{ env.TARGET_CONFIG }}
+          fi
+      - name: Compilar Kernel Completo
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out ${{ env.TARGET_CONFIG }}
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out -j$(nproc)
-          echo "Iniciando compilación..."
-
       - name: Desempaquetar y Re-empaquetar Boot Image para Odin/Fastboot
         run: |
           echo "Buscando boot.img original subido a la raíz..."
           if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
               echo "¡boot.img original localizado!"
               
-              # Creamos un directorio aislado para evitar que cp entre en conflicto
+              # Creamos un directorio aislado para que cp no se muerda la cola
               mkdir -p $GITHUB_WORKSPACE/repack
               cd $GITHUB_WORKSPACE/repack
               
-              # Copiamos el boot original desde el espacio de trabajo principal
+              # Copiamos el boot original desde la raíz a nuestra carpeta de trabajo
               cp "$GITHUB_WORKSPACE/boot.img" ./boot.img
               
               echo "Descargando magiskboot nativo para Linux x86_64..."
