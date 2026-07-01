@@ -7,7 +7,7 @@ on:
 
 env:
   KERNEL_ROOT: "kernel-source/kernel-6.6" # Ajusta esta ruta si tu carpeta de origen tiene otro nombre
-  TARGET_CONFIG: "defconfig" # Ajusta al nombre de tu defconfig si es diferente
+  TARGET_CONFIG: "gki-defconfig" # Ajusta al nombre de tu defconfig si es diferente
 
 jobs:
   build:
