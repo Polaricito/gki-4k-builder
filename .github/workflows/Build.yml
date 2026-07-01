@@ -141,7 +141,7 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
-              echo "Inyectando stubs de mitigación completos y anulando advertencias de desuso..."
+              echo "Inyectando stubs de mitigación completos y aunlando advertencias de desuso..."
               
               sed -i 's/static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/g' mm/io_record.c
               sed -i 's/static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/g' mm/io_record.c
@@ -168,15 +168,19 @@ jobs:
         run: |
           cd ${{ env.KERNEL_ROOT }}
           if [ -f "fs/fuse/inode.c" ]; then
-              echo "Inyectando stub de símbolo débil corregido (int) para fslog_stlog en FUSE..."
+              echo "Aislando definición vieja de fslog_stlog para evitar conflictos de tipo..."
+              # Renombramos el símbolo nativo roto para que no colisione con el enlazador global
+              sed -i 's/\bfslog_stlog\b/fslog_stlog_old/g' fs/fuse/inode.c
+              
+              echo "Inyectando stub global limpio tipo (int) compatible con fslog.h..."
               cat << 'EOF' >> fs/fuse/inode.c
 
-          /* Parche de mitigación para bypass de telemetría faltante de Samsung */
-          int __attribute__((weak)) fslog_stlog(const char *fmt, ...) {
+          /* Parche de mitigación definitivo para bypass de telemetría faltante de Samsung */
+          int fslog_stlog(const char *fmt, ...) {
               return 0;
           }
           EOF
-              echo "¡Símbolo de emergencia fslog_stlog (int) inyectado correctamente!"
+              echo "¡Símbolo de emergencia fslog_stlog reestructurado con éxito!"
           fi
 
       - name: Compilar Kernel Oficial Samsung
@@ -202,7 +206,7 @@ jobs:
           
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
-      - name: Empaquetar Kernel (AnyKernel3 Seguro para Samsung)
+      - name: Empaquetar Kernel (AnyKernel3 Optmizado)
         run: |
           cd $GITHUB_WORKSPACE
           
@@ -221,14 +225,41 @@ jobs:
           cp "$KERNEL_IMAGE" AnyKernel3/Image
           cd AnyKernel3
           
+          # Desactivar restricciones de instalación genéricas para evitar errores en recovery
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          sed -i 's|block=/dev/block/bootdevice/by-name/boot;|block=/dev/block/by-name/boot;|g' anykernel.sh
-          sed -i 's|block=auto;|block=/dev/block/by-name/boot;|g' anykernel.sh
+          sed -i 's/block=auto;/block=auto;\nswitch_to_init_boot=auto;/g' anykernel.sh
           
           zip -r9 $GITHUB_WORKSPACE/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip *
 
-      - name: Subir Artefacto Compilado a GitHub
+      - name: Generar boot.img Modificado (Bypass definitivo de errores de instalador)
+        run: |
+          cd $GITHUB_WORKSPACE
+          if [ -f "boot.img" ]; then
+              echo "¡Detectado boot.img base en el repositorio! Procesando empaquetado directo..."
+              curl -Lo magiskboot https://github.com/OSM0SIS/MagiskBoot-Linux-Builds/raw/main/x86_64/magiskboot
+              chmod +x magiskboot
+              
+              ./magiskboot unpack boot.img
+              
+              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }}/out -name "Image" | head -n 1)
+              if [ -n "$KERNEL_IMAGE" ]; then
+                  cp -f "$KERNEL_IMAGE" kernel
+                  echo "Inyectando nueva Image GKI en la estructura del boot..."
+                  ./magiskboot repack boot.img $GITHUB_WORKSPACE/boot_modificado_KSU_SUSFS.img
+                  echo "¡boot_modificado_KSU_SUSFS.img generado exitosamente!"
+              else
+                  echo "Error: No se localizó la Image del kernel para la inyección."
+                  exit 1
+              fi
+          else
+              echo "Aviso: No colocaste un 'boot.img' de fábrica en tu repositorio de GitHub. Se omitirá este paso, pero cuentas con el instalador AnyKernel3.zip listo."
+          fi
+
+      - name: Subir Artefactos Compilados a GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel_Samsung_Modificado
-          path: ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
+          name: Kernel_Samsung_Estable_KSU_SUSFS
+          path: |
+            ${{ github.workspace }}/Kernel_Samsung_OneUI7_KernelSU_SUSFS.zip
+            ${{ github.workspace }}/boot_modificado_KSU_SUSFS.img
+          if-no-files-found: warn
