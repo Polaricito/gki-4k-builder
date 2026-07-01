@@ -37,36 +37,37 @@ jobs:
               git clone --depth=1 "$REPO_URL" "$TARGET_DIR"
           fi
 
-      - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
+            - name: Parchear mm/io_record.c y Ganchos de Rastreo de Samsung
         run: |
           cd $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }}
           if [ -f "mm/io_record.c" ]; then
-              echo "Inyectando stubs de mitigación al INICIO de mm/io_record.c..."
+              echo "Inyectando stubs de mitigación robustos al INICIO de mm/io_record.c..."
               
-              # Prevenir errores de -Werror,-Wunused-function marcando funciones inactivas como permitidas
+              # Prevenir errores de -Werror,-Wunused-function
               sed -i 's/^static void io_record_ksys_umount/static void __maybe_unused io_record_ksys_umount/' mm/io_record.c
               sed -i 's/^static void io_record_do_read_fault/static void __maybe_unused io_record_do_read_fault/' mm/io_record.c
               sed -i 's/^static void io_record_filemap_map_pages/static void __maybe_unused io_record_filemap_map_pages/' mm/io_record.c
               sed -i 's/^static void io_record_filemap_read/static void __maybe_unused io_record_filemap_read/' mm/io_record.c
               
-              # Creamos los stubs en un archivo temporal primero
+              # Creamos los stubs usando do {} while(0) para evitar "statement with no effect"
               printf '%s\n' \
-                '#define register_trace_android_vh_do_read_fault(...) 0' \
-                '#define unregister_trace_android_vh_do_read_fault(...) 0' \
-                '#define register_trace_android_vh_filemap_map_pages(...) 0' \
-                '#define unregister_trace_android_vh_filemap_map_pages(...) 0' \
-                '#define register_trace_android_vh_filemap_read(...) 0' \
-                '#define unregister_trace_android_vh_filemap_read(...) 0' \
-                '#define register_trace_android_rvh_ksys_umount(...) 0' \
-                '#define unregister_trace_android_rvh_ksys_umount(...) 0' > mm/io_record.tmp
+                '#define register_trace_android_vh_do_read_fault(...) do { } while (0)' \
+                '#define unregister_trace_android_vh_do_read_fault(...) do { } while (0)' \
+                '#define register_trace_android_vh_filemap_map_pages(...) do { } while (0)' \
+                '#define unregister_trace_android_vh_filemap_map_pages(...) do { } while (0)' \
+                '#define register_trace_android_vh_filemap_read(...) do { } while (0)' \
+                '#define unregister_trace_android_vh_filemap_read(...) do { } while (0)' \
+                '#define register_trace_android_rvh_ksys_umount(...) do { } while (0)' \
+                '#define unregister_trace_android_rvh_ksys_umount(...) do { } while (0)' > mm/io_record.tmp
               
-              # Concatenamos el contenido original de io_record.c abajo de nuestros stubs
+              # Concatenamos el contenido original abajo de nuestros stubs blindados
               cat mm/io_record.c >> mm/io_record.tmp
               
-              # Reemplazamos el archivo original con el nuevo orden (Stubs arriba, código abajo)
+              # Reemplazamos el archivo original
               mv mm/io_record.tmp mm/io_record.c
-              echo "¡Modificaciones al inicio de mm/io_record.c completadas con éxito!"
+              echo "¡Modificaciones avanzadas en mm/io_record.c completadas!"
           fi
+
 
       - name: Crear Stubs de Hooks de Rastreo Android (Ganchos Samsung)
         run: |
