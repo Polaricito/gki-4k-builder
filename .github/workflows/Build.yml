@@ -7,7 +7,7 @@ on:
 
 env:
   KERNEL_ROOT: "kernel-source/kernel-6.6" # Ajusta esta ruta si tu carpeta de origen tiene otro nombre
-  TARGET_CONFIG: "gki_defconfig"          # Ajusta al nombre de tu defconfig si es diferente
+  TARGET_CONFIG: "defconfig" # Ajusta al nombre de tu defconfig si es diferente
 
 jobs:
   build:
@@ -143,7 +143,13 @@ jobs:
           echo "Buscando boot.img original subido a la raíz..."
           if [ -f "$GITHUB_WORKSPACE/boot.img" ]; then
               echo "¡boot.img original localizado!"
-              cp "$GITHUB_WORKSPACE/boot.img" .
+              
+              # Creamos un directorio aislado para que cp no se muerda la cola
+              mkdir -p $GITHUB_WORKSPACE/repack
+              cd $GITHUB_WORKSPACE/repack
+              
+              # Copiamos el boot original desde la raíz a nuestra carpeta de trabajo
+              cp "$GITHUB_WORKSPACE/boot.img" ./boot.img
               
               echo "Descargando magiskboot nativo para Linux x86_64..."
               curl -Lo magiskboot https://github.com/Uevo001/magiskboot-linux/raw/main/x86_64/magiskboot
@@ -153,7 +159,7 @@ jobs:
               ./magiskboot unpack boot.img
               
               echo "Buscando el archivo kernel (Image) recién compilado..."
-              KERNEL_IMAGE=$(find ${{ env.KERNEL_ROOT }} -name Image -type f | head -n 1)
+              KERNEL_IMAGE=$(find $GITHUB_WORKSPACE/${{ env.KERNEL_ROOT }} -name Image -type f | head -n 1)
               if [ -z "$KERNEL_IMAGE" ]; then
                   echo "ERROR: No se encontró el archivo Image compilado."
                   exit 1
